@@ -2,6 +2,9 @@
 
 Uses the OpenAI Responses API with synchronous client.
 """
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def invoke(model_id, prompt, multimodal_data=None):
@@ -18,25 +21,40 @@ def invoke(model_id, prompt, multimodal_data=None):
     Returns:
         The model's response text, or None on error
     """
-    from openai import OpenAI
-    
-    provider, model = model_id.split("/", 1)
-    
-    if provider == "lms":
-        base_url = "http://127.0.0.1:1234/v1"
-        client = OpenAI(base_url=base_url, api_key="lms")
-        response = client.responses.create(
-            model=model,
-            input=prompt
-        )
-        return response.output_text
-    
-    if provider == "openai":
-        client = OpenAI()
-        response = client.responses.create(
-            model=model,
-            input=prompt
-        )
-        return response.output_text
-    
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        logger.error(f"OpenAI client not available: {e}")
+        return None
+
+    try:
+        provider, model = model_id.split("/", 1)
+    except ValueError as e:
+        logger.error(f"Invalid model_id format '{model_id}': {e}")
+        return None
+
+    try:
+        if provider == "lms":
+            from core.config import LMS_PROVIDER_URL
+            client = OpenAI(base_url=LMS_PROVIDER_URL, api_key="lms")
+            response = client.responses.create(
+                model=model,
+                input=prompt
+            )
+            return getattr(response, "output_text", "") or ""
+
+        if provider == "openai":
+            client = OpenAI()
+            response = client.responses.create(
+                model=model,
+                input=prompt
+            )
+            return getattr(response, "output_text", "") or ""
+        
+        logger.warning(f"Unknown provider '{provider}' in model_id '{model_id}'")
+        return None
+    except Exception as e:
+        logger.error(f"LLM invocation failed: {type(e).__name__}: {e}")
+        return None
+
     return None

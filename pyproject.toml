@@ -8,4 +8,5 @@ dependencies = [
     "openai>=2.15.0",
     "pydantic>=2.12.5",
     "pytest-playwright>=0.7.2",
+    "fastmcp==3.0.0b1",
 ]
