@@ -14,15 +14,9 @@ from datetime import datetime
 from pydantic import BaseModel, Field, PrivateAttr
 
 from .config import settings
-from .responses import BaseResponse, ReActResponse, ChatMessage
+from .responses import BaseResponse, ReActResponse, Message
 
 logger = logging.getLogger(__name__)
-
-
-class Message(BaseModel):
-    """A single message in the conversation history."""
-    role: Literal["system", "user", "assistant"]
-    content: str
 
 
 class BaseContext(BaseModel):
@@ -130,7 +124,10 @@ class BaseContext(BaseModel):
                 params = tool.get("parameters", "...")
                 lines.append(f"- {name}({params}) - {desc}")
             elif isinstance(tool, BaseContext):
+                # Enhanced instruction for sub-agents
                 lines.append(f"- {tool.name}(query: str) - {tool.description}")
+                lines.append(f"  * Usage: Delegate complex tasks to {tool.name} by providing a detailed, natural language 'query'.")
+                lines.append(f"  * Example: {tool.name}({{\"query\": \"Find all python files in src/ and calculate their total size\"}})")
             else:
                 lines.append(f"- {tool}")
         
@@ -193,15 +190,22 @@ class BaseContext(BaseModel):
         self.history.append(Message(role="user", content=query))
         
         prompt = self.render(query)
-        raw_response = await inference.invoke(prompt, model_id=self.model_id)
+        parsed = await inference.invoke(
+            prompt, 
+            model_id=self.model_id,
+            response_model=self.response_model,
+            response_format=self.response_format
+        )
         
-        if raw_response is None:
-            raw_response = ""
-        
-        raw_str = raw_response if isinstance(raw_response, str) else json.dumps(raw_response)
+        # If inference returned a structured object, use its string representation for history
+        if hasattr(parsed, "to_json"):
+            raw_str = parsed.to_json()
+        elif hasattr(parsed, "model_dump_json"):
+            raw_str = parsed.model_dump_json()
+        else:
+            raw_str = str(parsed)
+            
         self.history.append(Message(role="assistant", content=raw_str))
-        
-        parsed = self._safe_parse_response(raw_response)
         return parsed
     
     def _safe_parse_response(self, raw_response):
@@ -289,6 +293,13 @@ class ReActContext(BaseContext):
         last_parsed = None
         tool_call_history = {}
         
+        # If this is a sub-agent (not orchestrator), we might want to cap history
+        # to prevent context-leakage between unrelated tasks.
+        if self.name != "orchestrator" and len(self.history) > 10:
+            logger.info(f"Capping history for sub-agent {self.name} to prevent loops.")
+            # Keep system (if first) + last few exchanges
+            self.history = self.history[:1] + self.history[-6:]
+        
         await self._emit_event("status", {
             "agent": self.name,
             "state": "thinking",
@@ -297,16 +308,19 @@ class ReActContext(BaseContext):
         
         for iteration in range(max(1, self.max_iterations)):
             prompt = self.render(query)
-            raw_response = await inference.invoke(prompt, model_id=self.model_id)
-            
-            if raw_response is None:
-                raw_response = ""
-            
-            raw_str = raw_response if isinstance(raw_response, str) else json.dumps(raw_response)
-            logger.debug(f"LLM response iter={iteration} chars={len(raw_str)}")
             
             try:
-                parsed = self.response_model.from_raw(raw_response, self.response_format)
+                parsed = await inference.invoke(
+                    prompt,
+                    model_id=self.model_id,
+                    response_model=self.response_model,
+                    response_format=self.response_format
+                )
+                
+                # If for some reason it's still a string (fallback), wrap it
+                if isinstance(parsed, str):
+                    parsed = self.response_model.from_raw(parsed, self.response_format)
+                    
                 last_parsed = parsed
                 
                 # Emit thought event
@@ -326,8 +340,10 @@ class ReActContext(BaseContext):
             except Exception as e:
                 observation = f"Format Error: Failed to parse your response. Error: {e}. Follow the RESPONSE PROTOCOL strictly."
                 self.history.append(Message(role="user", content=f"Observation: {observation}"))
-                last_parsed = self._fallback_response(raw_str, e)
-                logger.warning(f"Parse error iter={iteration} error={type(e).__name__}")
+                # Note: raw_str is no longer defined here in the same way, 
+                # but we can pass the error to fallback
+                last_parsed = self._fallback_response("Error in inference", e)
+                logger.warning(f"Parse/Inference error iter={iteration} error={type(e).__name__}")
                 continue
             
             action = getattr(parsed, "action", None)
@@ -375,15 +391,27 @@ class ReActContext(BaseContext):
             return name, {}
         
         try:
-            args = json.loads(args_str)
+            # Pre-process: if it looks like single-quoted JSON, try converting to double quotes
+            processed_args = args_str
+            if "'" in args_str and '"' not in args_str:
+                processed_args = args_str.replace("'", '"')
+                
+            args = json.loads(processed_args)
             return name, args if isinstance(args, dict) else {}
         except json.JSONDecodeError:
-            # Try to parse key=value format
+            # Try to parse key=value or key:value format
             args = {}
-            for part in args_str.split(","):
-                if "=" in part:
-                    k, v = part.split("=", 1)
-                    args[k.strip()] = v.strip().strip('"\'')
+            # Simple regex to find key: value or key=value
+            # Matches key="val", key='val', key=val
+            pairs = re.findall(r'(\w+)\s*[:=]\s*({.*?}|\[.*?\]|".*?"|\'.*?\'|[^,}]+)', args_str)
+            for k, v in pairs:
+                args[k.strip()] = v.strip().strip('"\'')
+            
+            # If regex failed but there's content, maybe it's just a single string argument
+            if not args and args_str:
+                # If it's a sub-agent, assume it's the query
+                args = {"query": args_str.strip().strip('"\'')}
+                
             return name, args
     
     def _parse_tool_calls(self, answer_str: str) -> list:
@@ -409,12 +437,18 @@ class ReActContext(BaseContext):
     async def _execute_tool(self, tool_name: str, tool_args: dict):
         """Execute a tool by name."""
         tool_func = None
+        tool_dict = None  # Keep reference to dict for MCP tools
+        
         for t in self.tools:
             if callable(t) and t.__name__ == tool_name:
                 tool_func = t
                 break
             elif isinstance(t, dict) and t.get("name") == tool_name:
+                tool_dict = t  # Save the dict
                 tool_func = t.get("callable")
+                # If no callable but has mcp_tool, handle it specially
+                if not tool_func and "mcp_tool" in t:
+                    tool_func = "mcp"  # Marker for MCP tools
                 break
             elif isinstance(t, BaseContext) and t.name == tool_name:
                 tool_func = t
@@ -423,8 +457,8 @@ class ReActContext(BaseContext):
         if not tool_func:
             return f"Error: Tool {tool_name} not found."
         
-        # Emit: tool_call_start
-        await self._emit_event("tool_call_start", {
+        # Emit: tool_call
+        await self._emit_event("tool_call", {
             "tool_name": tool_name,
             "args": tool_args,
             "agent": self.name
@@ -432,7 +466,7 @@ class ReActContext(BaseContext):
         
         await self._emit_event("status", {
             "agent": self.name,
-            "state": f"tool:{tool_name}",
+            "state": "executing",
             "message": f"Executing {tool_name}..."
         })
         
@@ -441,8 +475,19 @@ class ReActContext(BaseContext):
             
             result = None
             
+            # Handle MCP Tools (dict tools with mcp_tool key)
+            if tool_func == "mcp" and tool_dict and "mcp_tool" in tool_dict:
+                # Get the toolkit from chrome_agent module
+                # This is a bit of a hack, but it works for now
+                # In production, we'd want to pass the toolkit reference more cleanly
+                try:
+                    from agents.chrome_agent import chrome_toolkit
+                    result = await chrome_toolkit.call_tool(tool_name, tool_args)
+                except Exception as e:
+                    result = f"Error calling MCP tool {tool_name}: {e}"
+            
             # Handle Sub-Agents (BaseContext instances)
-            if isinstance(tool_func, BaseContext):
+            elif isinstance(tool_func, BaseContext):
                 sub_query = tool_args.get("query")
                 if not sub_query:
                     vals = list(tool_args.values())
@@ -469,8 +514,8 @@ class ReActContext(BaseContext):
             else:
                 result = f"Error: Tool {tool_name} is not executable"
             
-            # Emit: tool_call_end
-            await self._emit_event("tool_call_end", {
+            # Emit: tool_result
+            await self._emit_event("tool_result", {
                 "tool_name": tool_name,
                 "success": True,
                 "agent": self.name
@@ -492,7 +537,7 @@ class ReActContext(BaseContext):
         
         except Exception as e:
             err = f"Error executing tool {tool_name}: {e}"
-            await self._emit_event("tool_call_end", {
+            await self._emit_event("tool_result", {
                 "tool_name": tool_name,
                 "success": False,
                 "agent": self.name

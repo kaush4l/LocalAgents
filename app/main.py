@@ -2,17 +2,18 @@
 FastAPI backend for the AI Agent Chatbot.
 Provides WebSocket-based real-time communication with the orchestrator.
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
-import asyncio
 import json
 import logging
 from datetime import datetime
 from pathlib import Path
 import sys
+import asyncio
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -20,6 +21,7 @@ sys.path.insert(0, str(project_root))
 
 from agents.orchestrator import initialize_orchestrator
 from core.config import settings
+from core.audio import transcription_worker
 from app.state import ui_state, AgentStatus
 
 # Configure logging
@@ -118,6 +120,16 @@ async def startup_event():
     """Initialize the orchestrator on startup."""
     global orchestrator
     try:
+        transcription_worker.start()
+        
+        # Preload models in background
+        import threading
+        def preload():
+            transcription_worker.preload_models([
+                "mlx-community/whisper-large-v3-turbo-fp16"
+            ])
+        threading.Thread(target=preload, daemon=True).start()
+
         orchestrator = await initialize_orchestrator()
         orchestrator.set_event_callback(broadcast_event)
         logger.info("Orchestrator initialized and event callback set.")
@@ -202,6 +214,7 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown."""
     logger.info("Shutting down...")
+    transcription_worker.stop()
     
     if orchestrator:
         if hasattr(orchestrator, "close"):
@@ -319,8 +332,36 @@ async def websocket_endpoint(websocket: WebSocket):
         ui_state.add_event("system", "System", "Client connected")
         
         while True:
-            data = await websocket.receive()
+            # Poll for transcription results frequently
+            current_status = transcription_worker.status
+            try:
+                # Use wait_for to check for messages but timeout quickly to check transcription queue
+                data = await asyncio.wait_for(websocket.receive(), timeout=0.1)
+            except asyncio.TimeoutError:
+                # Check for transcription results
+                transcript = transcription_worker.get_result()
+                if transcript:
+                    await websocket.send_json({
+                        "type": "transcription",
+                        "content": transcript
+                    })
+                
+                # Check for status change (simple check)
+                # In production, use a callback or event, but polling is okay here
+                if transcription_worker.status != current_status:
+                     await websocket.send_json({
+                        "type": "audio_status",
+                        "status": transcription_worker.status,
+                        "model": transcription_worker.model_path
+                    })
+                continue
+
+            # Handle Binary Data (Audio)
+            if "bytes" in data:
+                transcription_worker.push_audio(data["bytes"])
+                continue
             
+            # Handle Text Data
             if "text" in data:
                 try:
                     msg = json.loads(data["text"])
@@ -337,6 +378,21 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     # Record user message
                     ui_state.add_message("user", user_text)
+                    
+                    # ... (rest of message handling)
+                
+                elif command == "model_change":
+                    model_id = msg.get("model", "")
+                    if model_id:
+                        transcription_worker.set_model(model_id)
+                        await broadcast_event({
+                            "type": "log",
+                            "data": {
+                                "level": "info",
+                                "content": f"Transcription model switched to {model_id}",
+                                "agent": "System"
+                            }
+                        })
                     ui_state.is_processing = True
                     ui_state.current_query = user_text
                     

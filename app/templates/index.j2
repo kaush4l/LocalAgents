@@ -2,284 +2,199 @@
 {% block title %}Alfred - AI Agent Chatbot{% endblock %}
 {% block content %}
 
-<div class="flex h-screen overflow-hidden">
+<div class="flex h-screen overflow-hidden bg-white dark:bg-dark">
   
-  <!-- Left Sidebar: Agents Panel -->
-  <aside id="agents-panel" class="w-64 flex-shrink-0 dark:glass-dark glass-light flex flex-col border-r dark:border-primary/20 border-gray-200">
-    <!-- Panel Header -->
-    <div class="p-4 border-b dark:border-primary/20 border-gray-200">
-      <div class="flex items-center justify-between">
-        <h2 class="font-semibold dark:text-primary text-gray-700">Agents</h2>
-        <span class="text-xs dark:text-gray-400 text-gray-500" id="agent-count">{{ state.agents | length if state else 0 }} active</span>
-      </div>
-    </div>
-    
-    <!-- Agent List -->
-    <div id="agent-list" class="flex-1 overflow-y-auto scrollbar-thin p-2 space-y-2">
-      {% if state and state.agents %}
-        {% for agent_id, agent in state.agents.items() %}
-        <div class="agent-card fade-in p-3 rounded-lg dark:bg-dark-50/50 bg-light-100 border dark:border-gray-700/50 border-gray-200 transition-all hover:dark:border-primary/30 hover:border-primary/50" data-agent-id="{{ agent.id }}">
-          <div class="flex items-center gap-2 mb-2">
-            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white text-sm font-medium {% if agent.status == 'thinking' %}spin-slow{% endif %}">
-              {{ agent.name[:1] }}
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="font-medium text-sm dark:text-gray-200 text-gray-800 truncate">{{ agent.name }}</div>
-              <div class="text-xs status-{{ agent.status }} flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full {% if agent.status == 'idle' %}bg-gray-500{% elif agent.status == 'thinking' %}bg-primary pulse-glow{% elif agent.status == 'executing' %}bg-amber-500 pulse-glow{% elif agent.status == 'completed' %}bg-green-500{% else %}bg-red-500{% endif %}"></span>
-                {{ agent.status | capitalize }}
-              </div>
-            </div>
-          </div>
-          {% if agent.current_task %}
-          <div class="text-xs dark:text-gray-400 text-gray-500 truncate pl-10">{{ agent.current_task }}</div>
-          {% endif %}
-        </div>
-        {% endfor %}
-      {% else %}
-        <div class="text-center text-gray-500 py-8 text-sm">
-          No agents registered
-        </div>
-      {% endif %}
-    </div>
-    
-    <!-- Tools Section -->
-    <div class="border-t dark:border-primary/20 border-gray-200">
-      <div class="p-4 border-b dark:border-primary/20 border-gray-200">
-        <div class="flex items-center justify-between">
-          <h2 class="font-semibold dark:text-secondary text-gray-700">Tools</h2>
-          <span class="text-xs dark:text-gray-400 text-gray-500" id="tool-count">{{ state.tools | length if state else 0 }}</span>
-        </div>
-      </div>
-      <div id="tool-list" class="p-2 space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
-        {% if state and state.tools %}
-          {% for tool_name, tool in state.tools.items() %}
-          <div class="tool-item flex items-center justify-between p-2 rounded dark:bg-dark-50/30 bg-light-100 text-sm" data-tool-name="{{ tool.name }}">
-            <div class="flex items-center gap-2">
-              <span class="text-amber-400">⚡</span>
-              <span class="dark:text-gray-300 text-gray-700 truncate">{{ tool.name }}</span>
-            </div>
-            <span class="text-xs dark:text-gray-500 text-gray-400">{{ tool.call_count }}x</span>
-          </div>
-          {% endfor %}
-        {% else %}
-          <div class="text-center text-gray-500 py-4 text-sm">No tools</div>
-        {% endif %}
-      </div>
-    </div>
-  </aside>
-
   <!-- Main Chat Area -->
-  <main class="flex-1 flex flex-col min-w-0">
+  <main class="flex-1 flex flex-col min-w-0 relative z-10 bg-white dark:bg-dark">
     <!-- Header -->
-    <header class="dark:glass-dark glass-light border-b dark:border-primary/20 border-gray-200 p-4 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center pulse-glow">
-          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-          </svg>
+    <header class="dark:bg-dark bg-white border-b dark:border-white/5 border-gray-100 px-8 py-5 flex items-center justify-between z-30">
+      <div class="flex items-center gap-5">
+        <div class="relative">
+          <div class="w-12 h-12 rounded-[20px] bg-primary flex items-center justify-center shadow-xl shadow-primary/20">
+            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <div class="absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-4 dark:border-dark border-white animate-pulse"></div>
         </div>
         <div>
-          <h1 class="text-xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Alfred</h1>
-          <p class="text-xs dark:text-gray-400 text-gray-500">AI Agent Assistant</p>
+          <h1 class="text-xl font-black dark:text-white text-gray-900 tracking-tight">Alfred</h1>
+          <div class="flex items-center gap-2 mt-0.5">
+            <span class="text-[10px] font-bold uppercase tracking-[0.2em] text-primary">Core Autonomous</span>
+          </div>
         </div>
       </div>
       
       <div class="flex items-center gap-4">
         <!-- Theme Toggle -->
-        <button id="theme-toggle" class="p-2 rounded-lg dark:bg-dark-50 bg-light-100 dark:hover:bg-dark-100 hover:bg-light-200 transition-colors" title="Toggle theme">
-          <svg class="w-5 h-5 dark:text-yellow-400 text-gray-700 dark:block hidden" fill="currentColor" viewBox="0 0 20 20">
-            <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
-          </svg>
-          <svg class="w-5 h-5 text-gray-700 dark:hidden" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
-          </svg>
+        <button id="theme-toggle" class="w-11 h-11 rounded-2xl dark:bg-dark-50 bg-gray-50 border dark:border-white/5 border-gray-100 flex items-center justify-center text-gray-500 hover:text-primary transition-all hover:scale-105 active:scale-95" title="Toggle theme">
+          <svg class="w-5 h-5 dark:hidden block" fill="currentColor" viewBox="0 0 20 20"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/></svg>
+          <svg class="w-5 h-5 hidden dark:block" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/></svg>
         </button>
         
         <!-- Connection Status -->
-        <div id="status-indicator" class="flex items-center gap-2 text-sm dark:text-gray-400 text-gray-600">
-          <span class="w-2 h-2 rounded-full bg-gray-500"></span>
-          <span>Connecting...</span>
+        <div id="status-indicator" class="flex items-center gap-3 pl-4 pr-5 py-2.5 rounded-2xl dark:bg-dark-50 bg-gray-50 border dark:border-white/5 border-gray-100">
+          <div class="relative">
+            <span class="block w-2 h-2 rounded-full bg-gray-400"></span>
+          </div>
+          <span class="text-[10px] font-black uppercase tracking-widest text-gray-500">Offline</span>
         </div>
       </div>
     </header>
 
     <!-- Messages Container -->
-    <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
+    <div id="messages" class="flex-1 overflow-y-auto px-6 py-8 space-y-8 scrollbar-custom bg-white dark:bg-dark">
       {% if state and state.messages %}
         {% for msg in state.messages %}
         <div class="message-enter flex {{ 'justify-end' if msg.role == 'user' else 'justify-start' }}">
-          <div class="max-w-[80%] {{ 'bg-gradient-to-r from-primary to-secondary' if msg.role == 'user' else 'dark:glass-dark glass-light' }} rounded-2xl px-4 py-3 {{ '' if msg.role == 'user' else 'border dark:border-gray-700 border-gray-200' }}">
-            <div class="flex items-center gap-2 mb-1">
-              {% if msg.role == 'user' %}
-              <span class="text-xs font-medium text-white/80">You</span>
-              {% else %}
-              <span class="text-xs font-medium text-primary">Alfred</span>
-              {% endif %}
+          <div class="max-w-[85%] lg:max-w-[70%] {{ 'bg-primary shadow-premium text-white' if msg.role == 'user' else 'dark:bg-dark-50 bg-gray-50 dark:text-gray-100 text-gray-900 border dark:border-white/10 border-gray-200 shadow-sm' }} rounded-3xl px-6 py-5">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-[9px] font-black tracking-widest uppercase opacity-60">{{ 'You' if msg.role == 'user' else 'Alfred' }}</span>
             </div>
-            <div class="message-content {{ 'text-white' if msg.role == 'user' else 'dark:text-gray-200 text-gray-800' }}">
-              {{ msg.content }}
+            <div class="message-content text-[15px] leading-relaxed">
+              {{ msg.content | safe }}
             </div>
           </div>
         </div>
         {% endfor %}
       {% else %}
-        <div id="welcome-message" class="text-center dark:text-gray-500 text-gray-400 py-8">
-          <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
-            <svg class="w-8 h-8 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+        <div id="welcome-message" class="h-full flex flex-col items-center justify-center text-center fade-in">
+          <div class="w-20 h-20 mb-8 rounded-[32px] bg-primary relative flex items-center justify-center shadow-2xl shadow-primary/20">
+            <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
             </svg>
           </div>
-          <p>Start a conversation with Alfred</p>
-          <p class="text-xs mt-1">Your AI-powered assistant</p>
+          <h2 class="text-3xl font-black dark:text-white text-gray-900 tracking-tight mb-4">Hello, I'm Alfred.</h2>
+          <p class="dark:text-gray-400 text-gray-500 max-w-sm mx-auto text-[15px] leading-relaxed">Your intelligent assistant for automation, browsing, and more. How can I help you today?</p>
         </div>
       {% endif %}
     </div>
 
     <!-- Input Area -->
-    <footer class="dark:glass-dark glass-light border-t dark:border-primary/20 border-gray-200 p-4">
-      <form id="chat-form" class="flex gap-3">
-        <input
-          type="text"
-          id="message-input"
-          placeholder="Ask Alfred anything..."
-          class="flex-1 dark:bg-dark/50 bg-white border dark:border-gray-700 border-gray-300 rounded-xl px-4 py-3 dark:text-white text-gray-900 dark:placeholder-gray-500 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
-          autocomplete="off"
-        />
-        <button
-          type="submit"
-          id="send-btn"
-          class="px-6 py-3 bg-gradient-to-r from-primary to-secondary rounded-xl font-medium text-white hover:opacity-90 transition-opacity flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <span>Send</span>
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
-          </svg>
-        </button>
-      </form>
+    <footer class="dark:bg-dark-50 bg-white border-t dark:border-white/5 border-gray-200 p-6 relative z-20">
+      <div class="max-w-4xl mx-auto">
+        <form id="chat-form" class="flex gap-4">
+            <div class="flex-1 relative group">
+              <div class="absolute -inset-0.5 bg-gradient-to-r from-primary/30 to-secondary/30 rounded-2xl blur opacity-0 group-focus-within:opacity-100 transition duration-500"></div>
+              <input
+                type="text"
+                id="message-input"
+                placeholder="Type your instruction..."
+                class="w-full relative dark:bg-dark-100/50 bg-gray-50 border dark:border-white/10 border-gray-200 rounded-2xl px-6 py-4 dark:text-gray-100 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm shadow-sm transition-all"
+                autocomplete="off"
+              />
+            </div>
+            
+            <button
+              type="submit"
+              id="send-btn"
+              class="px-8 py-4 bg-gradient-to-r from-primary to-secondary rounded-2xl font-bold text-white shadow-lg shadow-primary/20 hover:shadow-primary/40 hover:scale-[1.02] active:scale-95 transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:grayscale disabled:hover:scale-100"
+            >
+              <span>Send</span>
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+              </svg>
+            </button>
+        </form>
+        <div class="text-center mt-4">
+             <p class="text-[10px] uppercase tracking-widest font-bold dark:text-gray-600 text-gray-400">ReAct Reasoning Engine</p>
+        </div>
+      </div>
     </footer>
   </main>
 
   <!-- Right Sidebar: Events Panel -->
-  <aside id="events-panel" class="w-80 flex-shrink-0 dark:glass-dark glass-light flex flex-col border-l dark:border-primary/20 border-gray-200">
+  <aside id="events-panel" class="w-96 flex-shrink-0 dark:bg-dark bg-white border-l dark:border-white/10 border-gray-200 flex flex-col relative z-20">
     <!-- Panel Header -->
-    <div class="p-4 border-b dark:border-primary/20 border-gray-200 flex items-center justify-between">
-      <h2 class="font-semibold dark:text-primary text-gray-700">Live Events</h2>
-      <div class="flex items-center gap-2">
-        <span class="text-xs dark:text-gray-400 text-gray-500" id="event-count">{{ state.events | length if state else 0 }}</span>
-        <button id="clear-events" class="text-xs dark:text-gray-500 text-gray-400 hover:dark:text-red-400 hover:text-red-500 transition-colors" title="Clear events">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-          </svg>
+    <div class="p-6 border-b dark:border-white/5 border-gray-100 flex items-center justify-between">
+      <h2 class="font-bold text-xs uppercase tracking-widest dark:text-gray-400 text-gray-500">Intelligence Stream</h2>
+      <div class="flex items-center gap-3">
+        <span class="px-2 py-1 rounded-md text-[10px] font-mono dark:text-primary-300 text-primary-600 dark:bg-primary/10 bg-primary/5" id="event-count">{{ state.events | length if state else 0 }} events</span>
+        <button id="clear-events" class="p-1.5 rounded-lg hover:bg-danger/10 text-gray-400 hover:text-danger transition-colors" title="Clear log">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
         </button>
       </div>
     </div>
     
     <!-- Events Stream -->
-    <div id="events-list" class="flex-1 overflow-y-auto scrollbar-thin p-2 space-y-2">
+    <div id="events-list" class="flex-1 overflow-y-auto scrollbar-custom p-4 space-y-3 dark:bg-dark-50 bg-gray-50/50">
       {% if state and state.events %}
         {% for event in state.events[-50:] %}
-        <div class="event-item fade-in p-2 rounded-lg dark:bg-dark-50/30 bg-light-100 border-l-2 event-{{ event.type }} text-sm">
-          <div class="flex items-center justify-between mb-1">
-            <span class="font-medium text-xs uppercase tracking-wider
+        <div class="event-item fade-in p-4 rounded-xl dark:bg-dark-100/50 bg-white border dark:border-white/5 border-gray-200 hover:border-primary/20 transition-all text-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-black text-[9px] uppercase tracking-widest
               {% if event.type == 'query' %}text-primary
               {% elif event.type == 'thought' %}text-secondary
-              {% elif event.type == 'tool_call' %}text-amber-400
+              {% elif event.type == 'tool_call' %}text-amber-500
               {% elif event.type == 'tool_result' %}text-success
-              {% elif event.type == 'response' %}text-green-400
+              {% elif event.type == 'response' %}text-green-500
               {% elif event.type == 'error' %}text-danger
-              {% else %}dark:text-gray-400 text-gray-500{% endif %}
+              {% else %}dark:text-gray-500 text-gray-400{% endif %}
             ">
-              {% if event.type == 'query' %}📨 Query
-              {% elif event.type == 'thought' %}🧠 Thought
-              {% elif event.type == 'tool_call' %}⚡ Tool Call
-              {% elif event.type == 'tool_result' %}✅ Result
-              {% elif event.type == 'response' %}💬 Response
-              {% elif event.type == 'error' %}❌ Error
-              {% elif event.type == 'status' %}🔄 Status
-              {% else %}📝 {{ event.type }}{% endif %}
+              {% if event.type == 'query' %}Input
+              {% elif event.type == 'thought' %}Reasoning
+              {% elif event.type == 'tool_call' %}Action
+              {% elif event.type == 'tool_result' %}Result
+              {% elif event.type == 'response' %}Output
+              {% elif event.type == 'error' %}Error
+              {% elif event.type == 'status' %}Update
+              {% else %}{{ event.type }}{% endif %}
             </span>
-            <span class="text-xs dark:text-gray-500 text-gray-400">{{ event.timestamp[-8:] if event.timestamp else '' }}</span>
+            <span class="text-[9px] font-mono opacity-40">{{ event.timestamp[-8:] if event.timestamp else '' }}</span>
           </div>
-          <div class="dark:text-gray-300 text-gray-700 text-xs break-words whitespace-pre-wrap line-clamp-4">{{ event.content | truncate(300) if event.content is string else event.content | tojson | truncate(300) }}</div>
-          {% if event.agent %}
-          <div class="mt-1 text-xs dark:text-gray-500 text-gray-400">via {{ event.agent }}</div>
-          {% endif %}
+          <div class="dark:text-gray-300 text-gray-700 text-xs font-mono leading-relaxed break-words whitespace-pre-wrap max-h-32 overflow-hidden">{{ event.content | truncate(300) if event.content is string else event.content | tojson | truncate(300) }}</div>
         </div>
         {% endfor %}
       {% else %}
-        <div id="no-events" class="text-center dark:text-gray-500 text-gray-400 py-8 text-sm">
-          <div class="w-12 h-12 mx-auto mb-3 rounded-full dark:bg-dark-50 bg-light-100 flex items-center justify-center">
-            <svg class="w-6 h-6 dark:text-gray-600 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-            </svg>
-          </div>
-          <p>No events yet</p>
-          <p class="text-xs mt-1">Events will appear here in real-time</p>
+        <div id="no-events" class="h-full flex flex-col items-center justify-center opacity-30">
+           <svg class="w-10 h-10 mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+           <p class="text-xs font-medium uppercase tracking-widest">Awaiting Neural Link</p>
         </div>
       {% endif %}
-    </div>
-    
-    <!-- Active Agent Indicator -->
-    <div id="active-agent" class="border-t dark:border-primary/20 border-gray-200 p-3">
-      <div class="flex items-center gap-2">
-        <div class="w-2 h-2 rounded-full bg-gray-500" id="active-indicator"></div>
-        <span class="text-xs dark:text-gray-400 text-gray-500" id="active-agent-name">No active agent</span>
-      </div>
     </div>
   </aside>
 </div>
 
+<!-- Simplified UI Script -->
 <script>
-  // State management - initialized from server-rendered state
-  const initialState = {{ state | tojson if state else '{}' | safe }};
   let ws = null;
   let reconnectAttempts = 0;
   const maxReconnectAttempts = 5;
 
-  // DOM Elements
   const messagesContainer = document.getElementById('messages');
   const chatForm = document.getElementById('chat-form');
   const messageInput = document.getElementById('message-input');
   const sendBtn = document.getElementById('send-btn');
   const statusIndicator = document.getElementById('status-indicator');
   const eventsList = document.getElementById('events-list');
-  const agentList = document.getElementById('agent-list');
-  const toolList = document.getElementById('tool-list');
   const themeToggle = document.getElementById('theme-toggle');
   const clearEventsBtn = document.getElementById('clear-events');
 
   let currentAssistantMessage = null;
 
-  // WebSocket connection
   function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
     ws.onopen = () => {
       reconnectAttempts = 0;
-      updateStatus('connected', 'Connected');
+      updateStatus('connected', 'Online');
       sendBtn.disabled = false;
     };
 
     ws.onclose = () => {
       updateStatus('disconnected', 'Disconnected');
       sendBtn.disabled = true;
-      
       if (reconnectAttempts < maxReconnectAttempts) {
         reconnectAttempts++;
         setTimeout(connectWebSocket, 2000 * reconnectAttempts);
       }
     };
 
-    ws.onerror = () => {
-      updateStatus('error', 'Error');
-    };
-
+    ws.onerror = () => updateStatus('error', 'Error');
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('WS Received:', data);
         handleWebSocketMessage(data);
       } catch (e) {
         console.error('WS Parse error:', e);
@@ -288,30 +203,29 @@
   }
 
   function updateStatus(status, text) {
+    const indicator = statusIndicator.querySelector('span:first-child');
+    const textEl = statusIndicator.querySelector('span:last-child');
     const colors = {
-      connected: 'bg-green-500 pulse-glow',
-      disconnected: 'bg-red-500',
-      error: 'bg-red-500',
-      connecting: 'bg-yellow-500'
+      connected: 'bg-green-500', disconnected: 'bg-red-500', 
+      error: 'bg-red-500', connecting: 'bg-yellow-500'
     };
-    statusIndicator.innerHTML = `
-      <span class="w-2 h-2 rounded-full ${colors[status] || 'bg-gray-500'}"></span>
-      <span>${text}</span>
-    `;
+    indicator.className = `w-1.5 h-1.5 rounded-full ${colors[status] || 'bg-gray-500'}`;
+    textEl.textContent = text;
+    if (status === 'connected') {
+        statusIndicator.classList.add('dark:text-green-400', 'text-green-600', 'border-green-500/20');
+        statusIndicator.classList.remove('dark:text-red-400', 'text-red-600', 'border-red-500/20');
+    } else {
+        statusIndicator.classList.remove('dark:text-green-400', 'text-green-600', 'border-green-500/20');
+        statusIndicator.classList.add('dark:text-red-400', 'text-red-600', 'border-red-500/20');
+    }
   }
 
   function handleWebSocketMessage(msg) {
-    // Handle both flat format and nested data format
     const type = msg.type;
     const data = msg.data || msg;
     
     switch (type) {
-      case 'connected':
-        console.log('Session established');
-        break;
-
       case 'response':
-        setThinkingDone();
         if (currentAssistantMessage) {
           const content = currentAssistantMessage.querySelector('.message-content');
           content.innerHTML = formatMessage(data.content || msg.content || '');
@@ -319,168 +233,145 @@
         } else {
           addMessage('assistant', data.content || msg.content || '');
         }
-        addEvent('response', data.content || msg.content, data.agent || msg.agent);
+        addEvent('response', data.content || msg.content);
         break;
 
       case 'stream':
         if (!currentAssistantMessage) {
           currentAssistantMessage = addMessage('assistant', '');
         }
-        const content = currentAssistantMessage.querySelector('.message-content');
-        content.innerHTML = formatMessage(data.content || msg.content || '');
+        const streamDiv = currentAssistantMessage.querySelector('.message-content');
+        streamDiv.innerHTML = formatMessage(data.content || msg.content || '');
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
         break;
 
       case 'thought':
-        addEvent('thought', data.content || msg.content, data.agent || msg.agent);
-        updateActiveAgent(data.agent || msg.agent || 'Alfred', 'thinking', data.content || msg.content);
+        addEvent('thought', data.content || msg.content);
         break;
 
       case 'tool_call':
       case 'tool_call_start':
         const toolName = data.tool || data.tool_name || msg.tool || '';
         const toolArgs = data.args || data.arguments || msg.args || {};
-        addEvent('tool_call', `${toolName}(${JSON.stringify(toolArgs)})`, data.agent || msg.agent);
-        updateActiveAgent(data.agent || msg.agent || 'Alfred', 'executing', `Calling ${toolName}`);
-        incrementToolUsage(toolName);
+        const argsStr = JSON.stringify(toolArgs);
+        addEvent('tool_call', `${toolName}(${argsStr.length > 50 ? '...' : argsStr})`);
         break;
 
       case 'tool_result':
       case 'tool_call_end':
-        addEvent('tool_result', truncate(data.result || msg.result || '', 500), data.agent || msg.agent);
+        addEvent('tool_result', truncate(data.result || msg.result || '', 500));
         break;
 
       case 'error':
-        addEvent('error', data.content || msg.content, data.agent || msg.agent);
-        setThinkingDone();
+        addEvent('error', data.content || msg.content);
         if (currentAssistantMessage) {
-          const content = currentAssistantMessage.querySelector('.message-content');
-          content.innerHTML = `<span class="text-red-400">Error: ${data.content || msg.content}</span>`;
+          const errMsgDiv = currentAssistantMessage.querySelector('.message-content');
+          errMsgDiv.innerHTML = `<span class="text-red-400">Error: ${data.content || msg.content}</span>`;
           currentAssistantMessage = null;
         }
         break;
 
       case 'status':
-        const state = data.state || msg.state || '';
-        const message = data.message || data.content || msg.content || '';
-        addEvent('status', message, data.agent || msg.agent);
-        if (data.agent || msg.agent) {
-          updateActiveAgent(data.agent || msg.agent, state || 'idle', message);
-        }
+        addEvent('status', data.message || data.content || msg.content || '');
         break;
 
       case 'log':
-        addEvent('log', data.content || msg.content, data.agent || msg.agent);
-        break;
-
-      case 'agent_update':
-        updateAgentCard(data.agent || msg.agent, data.status || msg.status, data.task || msg.task);
+        addEvent('log', data.content || msg.content);
         break;
 
       case 'state_sync':
-        syncState(data.state || msg.state);
+        if (data.theme || msg.theme) applyTheme(data.theme || msg.theme);
+        if (data.messages || msg.messages) {
+            clearMessages();
+            (data.messages || msg.messages).forEach(m => addMessage(m.role, m.content));
+        }
+        if (data.events || msg.events) {
+            clearEventsInternal();
+            (data.events || msg.events).forEach(e => addEvent(e.type, e.content));
+        }
         break;
 
       case 'theme_change':
         applyTheme(data.theme || msg.theme);
         break;
 
-      case 'cleared':
-        // Clear messages except welcome
+      case 'messages_cleared':
         clearMessages();
         break;
 
-      case 'pong':
-        // Heartbeat response - ignore
+      case 'events_cleared':
+        clearEventsInternal();
         break;
 
       default:
-        console.log('Unknown message type:', type);
+        console.log('Event:', type);
     }
   }
 
-  function setThinkingDone() {
-    updateActiveAgent('Alfred', 'idle', '');
-  }
-
   function clearMessages() {
-    messagesContainer.innerHTML = `
-      <div id="welcome-message" class="text-center dark:text-gray-500 text-gray-400 py-8">
-        <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
-          <svg class="w-8 h-8 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
-          </svg>
-        </div>
-        <p>Start a conversation with Alfred</p>
-        <p class="text-xs mt-1">Your AI-powered assistant</p>
-      </div>
-    `;
+    const welcome = document.getElementById('welcome-message');
+    if (welcome) welcome.remove();
+    // Clear all children except welcome template or just clear all and let addMessage handle it
+    messagesContainer.innerHTML = '';
+    // Re-add welcome if empty? No, handled by addMessage
   }
 
-  // Event handling
-  function addEvent(type, data, agent = null) {
+  function clearEventsInternal() {
+    eventsList.innerHTML = '';
+    const countEl = document.getElementById('event-count');
+    if (countEl) countEl.textContent = '0 events';
+  }
+
+  function addEvent(type, data) {
     const noEvents = document.getElementById('no-events');
     if (noEvents) noEvents.remove();
 
     const timestamp = new Date().toISOString();
     const eventDiv = document.createElement('div');
-    eventDiv.className = `event-item fade-in p-2 rounded-lg dark:bg-dark-50/30 bg-light-100 border-l-2 event-${type} text-sm`;
-    
-    const icons = {
-      query: '📨 Query',
-      thought: '🧠 Thought',
-      tool_call: '⚡ Tool Call',
-      tool_result: '✅ Result',
-      response: '💬 Response',
-      error: '❌ Error',
-      status: '🔄 Status',
-      log: '📝 Log'
+    eventDiv.className = `event-item fade-in p-4 rounded-xl dark:bg-dark-100/50 bg-white border dark:border-white/5 border-gray-200 hover:border-primary/20 transition-all text-sm`;
+
+    const labels = {
+      query: 'Input', thought: 'Reasoning', tool_call: 'Action',
+      tool_result: 'Result', response: 'Output', error: 'Error', status: 'Update', log: 'Log'
     };
 
     const colors = {
-      query: 'text-primary',
-      thought: 'text-secondary',
-      tool_call: 'text-amber-400',
-      tool_result: 'text-success',
-      response: 'text-green-400',
-      error: 'text-danger',
-      status: 'text-cyan-400',
-      log: 'dark:text-gray-400 text-gray-500'
+      query: 'text-primary', thought: 'text-secondary', tool_call: 'text-amber-500',
+      tool_result: 'text-success', response: 'text-green-500', error: 'text-danger',
+      status: 'text-cyan-400', log: 'dark:text-gray-500 text-gray-400'
     };
 
     eventDiv.innerHTML = `
-      <div class="flex items-center justify-between mb-1">
-        <span class="font-medium text-xs uppercase tracking-wider ${colors[type] || 'dark:text-gray-400 text-gray-500'}">${icons[type] || '📝 ' + type}</span>
-        <span class="text-xs dark:text-gray-500 text-gray-400">${timestamp.slice(-13, -5)}</span>
+      <div class="flex items-center justify-between mb-2">
+        <span class="font-black text-[9px] uppercase tracking-widest ${colors[type] || ''}">${labels[type] || type}</span>
+        <span class="text-[9px] font-mono opacity-40">${timestamp.slice(-13, -5)}</span>
       </div>
-      <div class="dark:text-gray-300 text-gray-700 text-xs break-words whitespace-pre-wrap line-clamp-4">${escapeHtml(truncate(String(data || ''), 300))}</div>
-      ${agent ? `<div class="mt-1 text-xs dark:text-gray-500 text-gray-400">via ${agent}</div>` : ''}
+      <div class="dark:text-gray-300 text-gray-700 text-xs font-mono leading-relaxed break-words whitespace-pre-wrap line-clamp-4 hover:line-clamp-none transition-all">${escapeHtml(truncate(String(data || ''), 300))}</div>
     `;
 
     eventsList.appendChild(eventDiv);
     eventsList.scrollTop = eventsList.scrollHeight;
     
-    // Update count
+    if (eventsList.children.length > 50) eventsList.children[0].remove();
     const countEl = document.getElementById('event-count');
-    countEl.textContent = eventsList.querySelectorAll('.event-item').length;
+    if (countEl) countEl.textContent = `${eventsList.children.length} events`;
   }
 
-  // Message handling
   function addMessage(role, content) {
     const welcome = document.getElementById('welcome-message');
     if (welcome) welcome.remove();
 
     const messageDiv = document.createElement('div');
     messageDiv.className = `message-enter flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
-
     const isUser = role === 'user';
+    
     messageDiv.innerHTML = `
-      <div class="max-w-[80%] ${isUser ? 'bg-gradient-to-r from-primary to-secondary' : 'dark:glass-dark glass-light'} rounded-2xl px-4 py-3 ${isUser ? '' : 'border dark:border-gray-700 border-gray-200'}">
-        <div class="flex items-center gap-2 mb-1">
-          ${isUser ? '<span class="text-xs font-medium text-white/80">You</span>' : '<span class="text-xs font-medium text-primary">Alfred</span>'}
+      <div class="max-w-[85%] lg:max-w-[70%] ${isUser ? 'bg-primary shadow-premium text-white' : 'dark:bg-dark-50 bg-gray-50 dark:text-gray-100 text-gray-900 border dark:border-white/10 border-gray-200 shadow-sm'} rounded-3xl px-6 py-5">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-[9px] font-black tracking-widest uppercase opacity-60">${isUser ? 'You' : 'Alfred'}</span>
         </div>
-        <div class="message-content ${isUser ? 'text-white' : 'dark:text-gray-200 text-gray-800'}">
-          ${content || '<span class="typing-cursor dark:text-gray-400 text-gray-500">Thinking...</span>'}
+        <div class="message-content text-[15px] leading-relaxed">
+          ${content ? formatMessage(content) : '<span class="opacity-50 italic">Thinking...</span>'}
         </div>
       </div>
     `;
@@ -490,105 +381,18 @@
     return messageDiv;
   }
 
-  // Agent updates
-  function updateAgentCard(agentId, status, task = null) {
-    const card = document.querySelector(`[data-agent-id="${agentId}"]`);
-    if (!card) return;
-
-    const statusColors = {
-      idle: 'bg-gray-500',
-      thinking: 'bg-primary pulse-glow',
-      executing: 'bg-amber-500 pulse-glow',
-      completed: 'bg-green-500',
-      error: 'bg-red-500'
-    };
-
-    // Find status element by looking for any status class
-    const statusEl = card.querySelector('[class*="status-"]');
-    if (statusEl) {
-      // Reset class to base and add new status
-      const baseClasses = 'text-xs flex items-center gap-1';
-      statusEl.className = `${baseClasses} status-${status}`;
-      statusEl.innerHTML = `
-        <span class="w-1.5 h-1.5 rounded-full ${statusColors[status] || 'bg-gray-500'}"></span>
-        ${status.charAt(0).toUpperCase() + status.slice(1)}
-      `;
-    }
-
-    const avatar = card.querySelector('.w-8.h-8');
-    if (avatar) {
-      avatar.classList.toggle('spin-slow', status === 'thinking');
-    }
-
-    if (task) {
-      let taskEl = card.querySelector('.pl-10');
-      if (!taskEl) {
-        taskEl = document.createElement('div');
-        taskEl.className = 'text-xs dark:text-gray-400 text-gray-500 truncate pl-10';
-        card.appendChild(taskEl);
-      }
-      taskEl.textContent = task;
-    }
-  }
-
-  function updateActiveAgent(agentName, status, task = '') {
-    const indicator = document.getElementById('active-indicator');
-    const nameEl = document.getElementById('active-agent-name');
-    
-    const statusColors = {
-      idle: 'bg-gray-500',
-      thinking: 'bg-primary pulse-glow',
-      executing: 'bg-amber-500 pulse-glow',
-      completed: 'bg-green-500',
-      error: 'bg-red-500'
-    };
-
-    indicator.className = `w-2 h-2 rounded-full ${statusColors[status] || 'bg-gray-500'}`;
-    nameEl.textContent = agentName ? `${agentName}: ${truncate(task, 40) || status}` : 'No active agent';
-  }
-
-  function incrementToolUsage(toolName) {
-    const toolItem = document.querySelector(`[data-tool-name="${toolName}"]`);
-    if (toolItem) {
-      const countEl = toolItem.querySelector('span:last-child');
-      if (countEl && countEl.textContent.includes('x')) {
-        const current = parseInt(countEl.textContent) || 0;
-        countEl.textContent = `${current + 1}x`;
-      }
-    }
-  }
-
-  // Theme handling
-  function toggleTheme() {
-    fetch('/api/theme/toggle', { method: 'POST' })
-      .then(res => res.json())
-      .then(data => {
-        applyTheme(data.theme);
-      })
-      .catch(err => console.error('Theme toggle error:', err));
-  }
-
   function applyTheme(theme) {
     document.documentElement.classList.remove('dark', 'light');
     document.documentElement.classList.add(theme);
   }
 
-  // State sync
-  function syncState(newState) {
-    if (newState && newState.theme) applyTheme(newState.theme);
-    // Additional state sync as needed
-  }
-
-  // Utility functions
   function truncate(str, len) {
     if (!str) return '';
     str = String(str);
-    if (str.length <= len) return str;
-    return str.substring(0, len) + '...';
+    return str.length <= len ? str : str.substring(0, len) + '...';
   }
 
   function escapeHtml(text) {
-    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
@@ -597,63 +401,49 @@
   function formatMessage(text) {
     if (!text) return '';
     return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/\n/g, '<br>')
-      .replace(/`([^`]+)`/g, '<code class="dark:bg-dark bg-light-200 px-1 rounded text-primary">$1</code>')
+      .replace(/`([^`]+)`/g, '<code class="dark:bg-white/10 bg-black/5 px-1 rounded text-primary border border-white/10">$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   }
 
-  // Event listeners
   chatForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const message = messageInput.value.trim();
     if (!message || !ws || ws.readyState !== WebSocket.OPEN) return;
-
     addMessage('user', message);
     addEvent('query', message);
     ws.send(JSON.stringify({ type: 'message', content: message }));
     messageInput.value = '';
-    
-    // Start thinking indicator
-    updateActiveAgent('Alfred', 'thinking', 'Processing your request...');
   });
 
-  themeToggle.addEventListener('click', toggleTheme);
+  themeToggle.addEventListener('click', () => {
+    fetch('/api/theme/toggle', { method: 'POST' })
+      .then(res => res.json())
+      .then(data => applyTheme(data.theme));
+  });
 
   clearEventsBtn.addEventListener('click', () => {
-    fetch('/api/clear/events', { method: 'POST' })
-      .then(() => {
-        eventsList.innerHTML = `
-          <div id="no-events" class="text-center dark:text-gray-500 text-gray-400 py-8 text-sm">
-            <div class="w-12 h-12 mx-auto mb-3 rounded-full dark:bg-dark-50 bg-light-100 flex items-center justify-center">
-              <svg class="w-6 h-6 dark:text-gray-600 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-              </svg>
-            </div>
-            <p>No events yet</p>
-            <p class="text-xs mt-1">Events will appear here in real-time</p>
-          </div>
-        `;
-        document.getElementById('event-count').textContent = '0';
-      })
-      .catch(err => console.error('Clear events error:', err));
+    fetch('/api/clear/events', { method: 'POST' }).then(() => {
+        eventsList.innerHTML = `<div id="no-events" class="h-full flex flex-col items-center justify-center opacity-30"><p class="text-xs uppercase tracking-widest">Awaiting Neural Link</p></div>`;
+        const countEl = document.getElementById('event-count');
+        if (countEl) countEl.textContent = '0 events';
+    });
   });
 
-  // Keyboard shortcuts
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      messageInput.blur();
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === '/') {
-      e.preventDefault();
-      messageInput.focus();
-    }
-  });
-
-  // Initialize
   connectWebSocket();
 </script>
+
+<template id="welcome-message-template">
+  <div id="welcome-message" class="h-full flex flex-col items-center justify-center text-center fade-in">
+    <div class="w-20 h-20 mb-8 rounded-[32px] bg-primary relative flex items-center justify-center shadow-2xl shadow-primary/20">
+      <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+      </svg>
+    </div>
+    <h2 class="text-3xl font-black dark:text-white text-gray-900 tracking-tight mb-4">Hello, I'm Alfred.</h2>
+    <p class="dark:text-gray-400 text-gray-500 max-w-sm mx-auto text-[15px] leading-relaxed">Your intelligent assistant for automation, browsing, and more. How can I help you today?</p>
+  </div>
+</template>
 
 {% endblock %}

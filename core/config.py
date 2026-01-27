@@ -5,8 +5,9 @@ import os
 from typing import Literal
 
 # LLM Configuration
-DEFAULT_MODEL_ID = os.getenv("MODEL_ID", "lms/qwen3-8b")
+DEFAULT_MODEL_ID = os.getenv("MODEL_ID", "lms/openai/gpt-oss-20b")
 DEFAULT_RESPONSE_FORMAT: Literal["json", "toon"] = "json"
+DEFAULT_MAX_TOKENS = 32000
 DEFAULT_MAX_ITERATIONS = 8
 
 # Provider Configuration
@@ -36,6 +37,7 @@ class Settings:
         self.MODEL_ID = DEFAULT_MODEL_ID
         self.OPENAI_API_KEY = OPENAI_API_KEY
         self.MAX_ITERATIONS = DEFAULT_MAX_ITERATIONS
+        self.MAX_TOKENS = DEFAULT_MAX_TOKENS
         self.RESPONSE_FORMAT = DEFAULT_RESPONSE_FORMAT
 
 

@@ -5,6 +5,7 @@ import logging
 from core.engine import ReActContext
 from core.responses import ReActResponse
 from core.config import settings
+from pydantic import Field
 from .command_line_agent import initialize_command_line_agent
 from .chrome_agent import initialize_chrome_agent
 
@@ -21,8 +22,10 @@ class Orchestrator(ReActContext):
     4. Synthesizes results into coherent responses
     """
     
-    def __init__(self, sub_agents: list = None, **kwargs):
-        self.toolkits = kwargs.pop("toolkits", [])
+    # Store toolkits for cleanup (excluded from serialized model)
+    toolkits: list = Field(default_factory=list, exclude=True)
+    
+    def __init__(self, sub_agents: list = None, toolkits: list = None, **kwargs):
         defaults = {
             "name": "Orchestrator",
             "description": "The main assistant that coordinates and delegates tasks to specialized agents.",
@@ -32,6 +35,7 @@ class Orchestrator(ReActContext):
             "response_model": ReActResponse,
             "response_format": "json",
             "max_iterations": settings.MAX_ITERATIONS,
+            "toolkits": toolkits or []
         }
         defaults.update(kwargs)
         super().__init__(**defaults)

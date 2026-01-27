@@ -304,8 +304,7 @@ class ReActResponse(BaseResponse):
         )
 
 
-class ChatMessage(BaseModel):
-    """A single message in the conversation history."""
-    role: Literal["system", "user", "assistant"] = "user"
-    content: str = ""
-    name: str | None = None
+class Message(BaseModel):
+    """A single message in the conversation history, uniform across the app."""
+    role: Literal["system", "user", "assistant"]
+    content: str
