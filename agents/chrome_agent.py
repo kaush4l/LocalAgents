@@ -2,21 +2,18 @@
 Chrome Agent - Specialized agent for browser automation using Chrome DevTools MCP.
 """
 import logging
+import asyncio
 from core.tools import get_mcp_toolkit, format_tool_for_engine
 from core.engine import ReActContext
 from core.responses import ReActResponse
-from core.config import settings
+from core import config
 
 logger = logging.getLogger(__name__)
 
 
-async def initialize_chrome_agent():
+async def _setup_chrome_agent():
     """
-    Initialize the Chrome agent with Chrome DevTools MCP server.
-    
-    Returns:
-        agent: The Chrome agent context
-        toolkit: The MCP toolkit (needs to be closed on shutdown)
+    Async setup function for Chrome agent with Chrome DevTools MCP server.
     """
     # Configuration for Chrome DevTools MCP server
     server_config = {
@@ -45,14 +42,37 @@ async def initialize_chrome_agent():
     
     # Create the agent context
     agent = ReActContext(
-        name="ChromeAgent",
+        name="chrome_agent",
         description="An agent capable of controlling a browser via Chrome DevTools.",
         system_instructions="chrome_agent",
-        model_id=settings.MODEL_ID,
+        model_id=config.MODEL_ID,
         tools=formatted_tools,
-        toolkit=toolkit,
         response_model=ReActResponse,
-        response_format='json'
+        response_format='toon',
     )
     
-    return agent, toolkit
+    # Set the MCP toolkit for this agent's MCP tools
+    agent.set_mcp_toolkit(toolkit)
+
+    # Register cleanup for the toolkit
+    if toolkit:
+        agent.register_cleanup(toolkit.close)
+    
+    return agent
+
+
+# Initialize chrome_agent at module import time
+try:
+    chrome_agent = asyncio.run(_setup_chrome_agent())
+except Exception as e:
+    logger.error(f"Failed to initialize chrome_agent: {e}")
+    # Create a minimal agent on failure
+    chrome_agent = ReActContext(
+        name="chrome_agent",
+        description="An agent capable of controlling a browser via Chrome DevTools.",
+        system_instructions="chrome_agent",
+        model_id=config.MODEL_ID,
+        tools=[],
+        response_model=ReActResponse,
+        response_format='toon',
+    )
