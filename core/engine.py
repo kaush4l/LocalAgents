@@ -1,5 +1,5 @@
 """
-Core context engine for LLM interactions with ReAct-style tool calling.
+Core context engine for LLM interactions with Observe-Plan-Act style tool calling.
 Provides the foundation for multi-agent workflows with streaming events.
 """
 import json
@@ -7,16 +7,50 @@ import asyncio
 import inspect
 import re
 import logging
+import ast
 from pathlib import Path
-from typing import Any, Callable, Literal
-from datetime import datetime
+from typing import Any, Callable
 
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel, Field, PrivateAttr
 
-from .config import settings
+from . import config
 from .responses import BaseResponse, ReActResponse, Message
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# JINJA2 ENVIRONMENT (cached for performance)
+# =============================================================================
+
+_jinja_env: Environment = None
+
+
+def get_jinja_env(prompts_dir: Path = None) -> Environment:
+    """Get or create the cached Jinja2 environment.
+    
+    Args:
+        prompts_dir: Path to the prompts directory
+        
+    Returns:
+        Configured Jinja2 Environment with caching enabled
+    """
+    global _jinja_env
+    
+    if _jinja_env is None:
+        if prompts_dir is None:
+            prompts_dir = Path.cwd() / "prompts"
+        
+        _jinja_env = Environment(
+            loader=FileSystemLoader(str(prompts_dir)),
+            autoescape=select_autoescape(enabled_extensions=()),
+            auto_reload=False,  # Disable for performance (personal application)
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+    
+    return _jinja_env
 
 
 class BaseContext(BaseModel):
@@ -29,64 +63,97 @@ class BaseContext(BaseModel):
     - Message history management
     - LLM invocation with structured response parsing
     - Real-time event streaming via callbacks
+    
+    Tool types are determined automatically from the object:
+    - BaseContext instances → invoke via agent.invoke()
+    - Dict with 'mcp_tool' key → invoke via MCP toolkit
+    - Callable functions → invoke directly
     """
     model_config = {"arbitrary_types_allowed": True}
     
     name: str = Field(default="Agent")
     description: str = Field(default="A versatile AI agent.")
     system_instructions: str = Field(default="default")
-    model_id: str = Field(default_factory=lambda: settings.MODEL_ID)
+    model_id: str = Field(default_factory=lambda: config.MODEL_ID)
     tools: list = Field(default_factory=list)
     history: list = Field(default_factory=list)
     response_model: type = Field(default=ReActResponse)
     response_format: str = Field(default="json")
-    max_iterations: int = Field(default_factory=lambda: settings.MAX_ITERATIONS)
-    
-    # Event callback for real-time streaming
-    event_callback: Any = Field(default=None, exclude=True)
+    max_iterations: int = Field(default_factory=lambda: config.MAX_ITERATIONS)
     
     # Cached context components (private)
     _system_prompt: str = PrivateAttr(default="")
     _tool_instructions: str = PrivateAttr(default="")
     _response_instructions: str = PrivateAttr(default="")
-    _static_context: str = PrivateAttr(default="")
     _prompt_root: Path = PrivateAttr(default=Path.cwd() / "prompts")
+    _cleanup_callbacks: list[Callable] = PrivateAttr(default_factory=list)
+    _tool_registry: dict[str, Callable] = PrivateAttr(default_factory=dict)
+    _mcp_toolkit: Any = PrivateAttr(default=None)
     
     def __init__(self, **data):
         """Initialize the context and convert all parameters into cached instructions."""
         super().__init__(**data)
         self._prompt_root = Path.cwd() / "prompts"
+        self._tool_registry = self._build_tool_registry(self.tools)
         self._system_prompt = self._convert_system_instructions(self.system_instructions)
         self._tool_instructions = self._convert_tools_to_instructions(self.tools)
         self._response_instructions = self._convert_response_model_to_instructions(
             self.response_model, self.response_format
         )
-        self._static_context = self._build_static_context()
     
-    def set_event_callback(self, callback: Callable):
-        """Set callback to receive real-time events."""
-        self.event_callback = callback
+    def _build_tool_registry(self, tools: list) -> dict[str, Callable]:
+        """Build a registry mapping tool name -> invoke function.
+
+        This enables O(1) lookup and unified invocation pattern.
+        The invoke function encapsulates the tool type logic.
+        """
+        registry: dict[str, Callable] = {}
+        for t in tools:
+            if isinstance(t, BaseContext):
+                # Context tool: invoke returns coroutine
+                registry[t.name] = t.invoke
+            elif isinstance(t, dict):
+                name = t.get("name", "")
+                mcp_tool = t.get("mcp_tool")
+                if name and mcp_tool:
+                    # MCP tool: create wrapper that uses toolkit
+                    # The actual toolkit will be set via set_mcp_toolkit
+                    registry[name] = self._create_mcp_invoker(name)
+            elif callable(t) and not isinstance(t, type):
+                registry[t.__name__] = t
+        return registry
     
-    async def _emit_event(self, event_type: str, data: dict):
-        """Emit an event to the registered callback."""
-        if self.event_callback:
-            event = {
-                "type": event_type,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "data": data
-            }
-            if asyncio.iscoroutinefunction(self.event_callback):
-                await self.event_callback(event)
-            else:
-                self.event_callback(event)
+    def _create_mcp_invoker(self, tool_name: str) -> Callable:
+        """Create an invoker function for MCP tools."""
+        async def mcp_invoke(**kwargs):
+            if self._mcp_toolkit is None:
+                return f"Error: MCP toolkit not set for tool {tool_name}"
+            return await self._mcp_toolkit.call_tool(tool_name, kwargs)
+        return mcp_invoke
+    
+    def set_mcp_toolkit(self, toolkit):
+        """Set the MCP toolkit for this context's MCP tools."""
+        self._mcp_toolkit = toolkit
+
+    def get_tool(self, name: str) -> Callable | None:
+        """Get tool invoke function by name."""
+        return self._tool_registry.get(name)
+
     
     def _convert_system_instructions(self, system_instructions: str) -> str:
-        """Convert system instructions input to prompt text."""
+        """Convert system instructions input to prompt text.
+        
+        System prompts are STATIC .md files that define agent personality,
+        tone, and behavior. Dynamic elements (tools, context, messages)
+        are injected via render_template.j2 during render().
+        """
         if not system_instructions:
             return ""
         
         # Accept explicit file paths
         direct_path = Path(system_instructions)
+        
+        # Handle .md static files
         if direct_path.suffix == ".md" and direct_path.exists():
             return direct_path.read_text(encoding="utf-8").strip()
         
@@ -95,59 +162,87 @@ class BaseContext(BaseModel):
         if prompt_path.exists():
             return prompt_path.read_text(encoding="utf-8").strip()
         
+        # Return as raw string if no file found
         return str(system_instructions)
     
     def _convert_tools_to_instructions(self, tools: list) -> str:
-        """Convert a list of tools into text instructions."""
+        """Convert a list of tools into text instructions using Jinja2 template.
+        
+        Handles three types of tools:
+        1. BaseContext instances - sub-agent tools (invoke via agent.invoke())
+        2. Dict tools - MCP tools formatted as dictionaries
+        3. Callable functions - regular Python functions
+
+        Each tool includes: name, type, description, parameters, and invocation example.
+        """
         if not tools:
             return ""
         
-        lines = [
-            "## AVAILABLE TOOLS",
-            "To call a tool, use JSON format: tool_name({\"arg1\": \"value\"})",
-            ""
-        ]
+        tool_data = []
         
         for tool in tools:
-            if callable(tool):
+            if isinstance(tool, BaseContext):
+                # Sub-agent tool
+                tool_data.append({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": "query: str - The task or question to delegate to this agent",
+                    "invocation_example": f'{tool.name}({{"query": "your detailed task description"}})',
+                })
+
+            elif callable(tool) and not isinstance(tool, (BaseContext, type)):
+                # Regular callable function
                 name = tool.__name__
                 doc = (tool.__doc__ or "No description").strip().split("\n")[0]
                 sig = inspect.signature(tool)
-                params = ", ".join(
-                    f"{p.name}: {p.annotation.__name__ if p.annotation != inspect.Parameter.empty else 'Any'}"
-                    for p in sig.parameters.values()
-                )
-                lines.append(f"- {name}({params}) - {doc}")
+                params_lines = []
+                for p in sig.parameters.values():
+                    p_type = p.annotation.__name__ if p.annotation != inspect.Parameter.empty else "Any"
+                    p_default = f" = {p.default!r}" if p.default != inspect.Parameter.empty else ""
+                    params_lines.append(f"{p.name}: {p_type}{p_default}")
+                params_str = "\n".join(params_lines) if params_lines else "(no parameters)"
+                
+                # Build example invocation
+                example_args = {p.name: f"<{p.name}>" for p in sig.parameters.values()}
+                example = f'{name}({json.dumps(example_args)})'
+                
+                tool_data.append({
+                    "name": name,
+                    "description": doc,
+                    "parameters": params_str,
+                    "invocation_example": example,
+                })
+
             elif isinstance(tool, dict):
+                # MCP tool formatted as dict
                 name = tool.get("name", "unnamed_tool")
                 desc = tool.get("description", "No description")
-                params = tool.get("parameters", "...")
-                lines.append(f"- {name}({params}) - {desc}")
-            elif isinstance(tool, BaseContext):
-                # Enhanced instruction for sub-agents
-                lines.append(f"- {tool.name}(query: str) - {tool.description}")
-                lines.append(f"  * Usage: Delegate complex tasks to {tool.name} by providing a detailed, natural language 'query'.")
-                lines.append(f"  * Example: {tool.name}({{\"query\": \"Find all python files in src/ and calculate their total size\"}})")
+                params = tool.get("parameters", "(see schema)")
+                
+                tool_data.append({
+                    "name": name,
+                    "description": desc,
+                    "parameters": params,
+                    "invocation_example": f'{name}({{"param": "value"}})',
+                })
+
             else:
-                lines.append(f"- {tool}")
+                # Unknown tool type
+                tool_data.append({
+                    "name": str(tool),
+                    "description": "Unknown tool type",
+                    "parameters": "",
+                    "invocation_example": f"{tool}()",
+                })
         
-        return "\n".join(lines) if len(lines) > 3 else ""
+        # Render using Jinja2 template
+        env = get_jinja_env(self._prompt_root)
+        template = env.get_template("tools_instructions.j2")
+        return template.render(tools=tool_data)
     
     def _convert_response_model_to_instructions(self, response_model, response_format: str) -> str:
         """Convert response model class to instruction text."""
         return response_model.get_instructions(response_format)
-    
-    def _build_static_context(self) -> str:
-        """Build the static portion of the prompt."""
-        parts = [self._system_prompt]
-        
-        if self._tool_instructions:
-            parts.append(self._tool_instructions)
-        
-        parts.append("## RESPONSE PROTOCOL (STRICT)")
-        parts.append(self._response_instructions)
-        
-        return "\n\n".join(parts)
     
     def format_history(self, limit: int = 20, exclude_user_input: str | None = None) -> str:
         """Format recent message history for inclusion in prompt."""
@@ -173,15 +268,39 @@ class BaseContext(BaseModel):
         
         return "\n".join(lines)
     
-    def render(self, user_input: str) -> str:
-        """Render the full prompt by combining cached static context with dynamic history."""
+    def render(self, user_input: str, context: str = None, response_format: str = "json") -> str:
+        """Render the full prompt using render_template.j2 skeleton.
+        
+        Assembles prompt components in order:
+        1. system_prompt (STATIC) - Agent personality/behavior from .md file
+        2. context (DYNAMIC) - Observations, environment state
+        3. messages (DYNAMIC) - Conversation history
+        4. tools (DYNAMIC) - Available tools from tools_instructions.j2
+        5. response_instructions (SEMI-STATIC) - JSON format schema
+        6. user_input (DYNAMIC) - Current user query
+        
+        Args:
+            user_input: The current user query
+            context: Optional dynamic context (observations, environment state)
+            response_format: Response format - "json" or "toon"
+            
+        Returns:
+            Fully rendered prompt string
+        """
         user_text = "" if user_input is None else str(user_input)
         history = self.format_history(exclude_user_input=user_text)
         
-        history_block = f"\n\n{history}" if history else ""
-        user_block = f"\n\n## USER INPUT\n{user_text}"
-        
-        return f"{self._static_context}{history_block}{user_block}\n\nAssistant:"
+        env = get_jinja_env(self._prompt_root)
+        template = env.get_template("render_template.j2")
+        return template.render(
+            system_prompt=self._system_prompt,
+            context=context or "",
+            messages=history,
+            tools=self._tool_instructions,
+            response_instructions=self._response_instructions,
+            response_format=response_format,
+            user_input=user_text,
+        )
     
     async def invoke(self, query: str):
         """Invoke the LLM with the given query and return a parsed response."""
@@ -193,8 +312,7 @@ class BaseContext(BaseModel):
         parsed = await inference.invoke(
             prompt, 
             model_id=self.model_id,
-            response_model=self.response_model,
-            response_format=self.response_format
+            response_model=self.response_model
         )
         
         # If inference returned a structured object, use its string representation for history
@@ -207,11 +325,69 @@ class BaseContext(BaseModel):
             
         self.history.append(Message(role="assistant", content=raw_str))
         return parsed
+
+    def register_cleanup(self, callback: Callable):
+        """Register a cleanup callback to run when this context is closed.
+
+        The callback may be sync or async and will be awaited if needed.
+        """
+        if callback is None:
+            return
+        self._cleanup_callbacks.append(callback)
+
+    async def close(self):
+        """Close this context and any owned resources.
+
+        Default behavior:
+        - Close any context tools (BaseContext) present in `self.tools`.
+        - Run registered cleanup callbacks in LIFO order.
+        """
+        # Close context tools first (owner closes owned contexts)
+        for tool in self.tools:
+            if isinstance(tool, BaseContext) and hasattr(tool, "close"):
+                try:
+                    maybe = tool.close()
+                    if asyncio.iscoroutine(maybe):
+                        await maybe
+                except BaseException as e:
+                    if isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+                        raise
+                    logger.error(f"Error closing context tool {getattr(tool, 'name', str(tool))}: {e}")
+
+        # Run cleanup callbacks
+        for cb in reversed(self._cleanup_callbacks):
+            try:
+                result = cb()
+                if asyncio.iscoroutine(result):
+                    await result
+            except BaseException as e:
+                if isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+                    raise
+                logger.error(f"Error during cleanup for {self.name}: {e}")
+
+    def __call__(self, query: str | None = None, **kwargs):
+        """Allow contexts to be used as callable tools.
+
+        This enables tool calls like:
+        - tool_name("do X")
+        - tool_name(query="do X")
+
+        Returns the coroutine from `invoke(...)`.
+        """
+        resolved = query
+        if resolved is None:
+            resolved = kwargs.get("query")
+        if resolved is None and kwargs:
+            # Best-effort: first kwarg value
+            resolved = next(iter(kwargs.values()))
+        if resolved is None:
+            raise ValueError("Context tool requires a 'query' argument")
+        return self.invoke(str(resolved))
     
     def _safe_parse_response(self, raw_response):
         """Parse response, returning a safe fallback on errors."""
         try:
-            return self.response_model.from_raw(raw_response, self.response_format)
+            return self.response_model.from_raw(raw_response)
         except Exception as e:
             return self._fallback_response(raw_response, e)
     
@@ -221,42 +397,16 @@ class BaseContext(BaseModel):
         
         if issubclass(self.response_model, ReActResponse):
             return self.response_model(
-                rephrase="The system encountered an internal processing error.",
-                reverse="Analyze the error message and retry with a different approach.",
+                observation="The system encountered an internal processing error.",
+                plan=["Analyze the error message and retry with a different approach."],
                 action="answer",
-                answer=f"An error occurred: {error_msg}. Please try again."
+                response=f"An error occurred: {error_msg}. Please try again."
             )
         
         try:
             return self.response_model.model_construct()
         except Exception:
             return BaseResponse.model_construct()
-    
-    def initialization_report(self) -> dict:
-        """Return a compact snapshot of the context configuration for verification."""
-        tool_names = []
-        for tool in self.tools:
-            if callable(tool):
-                tool_names.append(tool.__name__)
-            elif isinstance(tool, dict):
-                tool_names.append(tool.get("name", "unnamed_tool"))
-            elif isinstance(tool, BaseContext):
-                tool_names.append(tool.name)
-            else:
-                tool_names.append(str(tool))
-        
-        return {
-            "name": self.name,
-            "description": self.description,
-            "model_id": self.model_id,
-            "system_instructions": self.system_instructions,
-            "response_format": self.response_format,
-            "tool_count": len(self.tools),
-            "tool_names": tool_names,
-            "history_count": len(self.history),
-            "has_system_prompt": bool(self._system_prompt),
-            "has_tool_instructions": bool(self._tool_instructions),
-        }
 
 
 class ReActContext(BaseContext):
@@ -283,7 +433,7 @@ class ReActContext(BaseContext):
             self.history = new_history
         
         result = await self.invoke(user_input)
-        return getattr(result, "answer", str(result))
+        return getattr(result, "response", str(result))
     
     async def invoke(self, query: str):
         """Invoke with ReAct loop until an answer or max iterations reached."""
@@ -300,12 +450,6 @@ class ReActContext(BaseContext):
             # Keep system (if first) + last few exchanges
             self.history = self.history[:1] + self.history[-6:]
         
-        await self._emit_event("status", {
-            "agent": self.name,
-            "state": "thinking",
-            "message": f"{self.name} is processing..."
-        })
-        
         for iteration in range(max(1, self.max_iterations)):
             prompt = self.render(query)
             
@@ -313,28 +457,23 @@ class ReActContext(BaseContext):
                 parsed = await inference.invoke(
                     prompt,
                     model_id=self.model_id,
-                    response_model=self.response_model,
-                    response_format=self.response_format
+                    response_model=self.response_model
                 )
                 
                 # If for some reason it's still a string (fallback), wrap it
                 if isinstance(parsed, str):
-                    parsed = self.response_model.from_raw(parsed, self.response_format)
+                    parsed = self.response_model.from_raw(parsed)
                     
                 last_parsed = parsed
                 
-                # Emit thought event
-                await self._emit_event("thought", {
-                    "content": getattr(parsed, "reverse", "") or getattr(parsed, "rephrase", ""),
-                    "agent": self.name,
-                    "metadata": {"iteration": iteration, "action": getattr(parsed, "action", "")}
-                })
-                
-                # Store condensed history
+                # Extract action and response - only these go into history
+                # observation/plan fields are discarded (not appended to conversation)
                 action = getattr(parsed, "action", None)
-                answer = getattr(parsed, "answer", "")
-                answer_short = answer[:80] + "..." if len(answer) > 80 else answer
-                condensed = f"[action={action}] {answer_short}"
+                response_text = getattr(parsed, "response", "")
+                
+                # Condensed history: only action + response (no observation/plan)
+                response_short = response_text[:120] + "..." if len(response_text) > 120 else response_text
+                condensed = f"[action={action}] {response_short}"
                 self.history.append(Message(role="assistant", content=condensed))
             
             except Exception as e:
@@ -353,7 +492,14 @@ class ReActContext(BaseContext):
                 return parsed
             
             if action == "tool":
-                tool_calls_str = getattr(parsed, "answer", "")
+                tool_response = getattr(parsed, "response", "")
+                
+                # Normalize response to string for tool parsing
+                # Response can be a string or list of tool calls
+                if isinstance(tool_response, list):
+                    tool_calls_str = "\n".join(str(t) for t in tool_response)
+                else:
+                    tool_calls_str = str(tool_response)
                 
                 # Loop Detection
                 tool_call_history[tool_calls_str] = tool_call_history.get(tool_calls_str, 0) + 1
@@ -363,9 +509,10 @@ class ReActContext(BaseContext):
                 else:
                     observation = await self.execute_tool_calls(tool_calls_str)
                 
-                observation_short = observation[:100] + "..." if len(observation) > 100 else observation
-                logger.info(f"Tool executed: {observation_short}")
-                self.history.append(Message(role="user", content=f"Observation: {observation}"))
+                # Append tool result to history (action + result only)
+                observation_short = observation[:200] + "..." if len(observation) > 200 else observation
+                logger.info(f"Tool executed: {observation_short[:100]}")
+                self.history.append(Message(role="user", content=f"Result: {observation}"))
                 continue
             
             break
@@ -376,10 +523,27 @@ class ReActContext(BaseContext):
         return last_parsed
     
     def _parse_tool_call(self, call_str: str) -> tuple:
-        """Parse a single tool call string into (name, args) tuple."""
+        """Parse a single tool call string into (name, args) tuple.
+        
+        Supports formats:
+        1. Regular JSON: tool_name({"arg1": "value"})
+        2. Context tool (legacy): await tool_name.invoke("query")
+        3. Context tool (preferred): tool_name("query")
+        """
         call_str = call_str.strip()
         
-        # Pattern: tool_name({...}) or tool_name(...)
+        # Pattern 1: await AgentName.invoke("query") - Context engine format
+        await_match = re.match(
+            r'(?:await\s+)?(\w+)\.invoke\s*\(\s*["\'](.+?)["\']\s*\)\s*$',
+            call_str,
+            re.DOTALL
+        )
+        if await_match:
+            name = await_match.group(1)
+            query = await_match.group(2)
+            return name, {"query": query}
+        
+        # Pattern 2: tool_name({...}) or tool_name(...) - Regular format
         match = re.match(r'(\w+)\s*\((.*)\)\s*$', call_str, re.DOTALL)
         if not match:
             return None, {}
@@ -389,6 +553,11 @@ class ReActContext(BaseContext):
         
         if not args_str:
             return name, {}
+        
+        # Handle quoted string argument (for backwards compatibility)
+        quoted_match = re.match(r'^["\'](.+)["\']$', args_str, re.DOTALL)
+        if quoted_match:
+            return name, {"query": quoted_match.group(1)}
         
         try:
             # Pre-process: if it looks like single-quoted JSON, try converting to double quotes
@@ -406,160 +575,201 @@ class ReActContext(BaseContext):
             pairs = re.findall(r'(\w+)\s*[:=]\s*({.*?}|\[.*?\]|".*?"|\'.*?\'|[^,}]+)', args_str)
             for k, v in pairs:
                 args[k.strip()] = v.strip().strip('"\'')
-            
+
             # If regex failed but there's content, maybe it's just a single string argument
             if not args and args_str:
                 # If it's a sub-agent, assume it's the query
                 args = {"query": args_str.strip().strip('"\'')}
-                
+
             return name, args
-    
+
     def _parse_tool_calls(self, answer_str: str) -> list:
         """Parse multiple tool calls from a string separated by newlines."""
-        calls = []
-        for line in answer_str.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            
+        calls: list[tuple[str, dict]] = []
+
+        # Normalize non-empty lines
+        lines = [ln.strip() for ln in (answer_str or "").splitlines() if ln.strip()]
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # Support:
+            # tool_name
+            # {"query": "..."}
+            if re.fullmatch(r"\w+", line) and (i + 1) < len(lines):
+                nxt = lines[i + 1]
+                if nxt.startswith("{") and nxt.endswith("}"):
+                    try:
+                        parsed = json.loads(nxt)
+                        if isinstance(parsed, dict):
+                            calls.append((line, parsed))
+                            i += 2
+                            continue
+                    except json.JSONDecodeError:
+                        pass
+
             name, args = self._parse_tool_call(line)
             if name:
                 calls.append((name, args))
-        
+            i += 1
+
         # If no calls found, try parsing the whole thing as one call
         if not calls:
             name, args = self._parse_tool_call(answer_str)
             if name:
                 calls.append((name, args))
-        
+
         return calls
-    
-    async def _execute_tool(self, tool_name: str, tool_args: dict):
-        """Execute a tool by name."""
-        tool_func = None
-        tool_dict = None  # Keep reference to dict for MCP tools
+
+    def _tool_env(self) -> dict[str, Any]:
+        """Build a safe evaluation environment for tool calls.
         
-        for t in self.tools:
-            if callable(t) and t.__name__ == tool_name:
-                tool_func = t
-                break
-            elif isinstance(t, dict) and t.get("name") == tool_name:
-                tool_dict = t  # Save the dict
-                tool_func = t.get("callable")
-                # If no callable but has mcp_tool, handle it specially
-                if not tool_func and "mcp_tool" in t:
-                    tool_func = "mcp"  # Marker for MCP tools
-                break
-            elif isinstance(t, BaseContext) and t.name == tool_name:
-                tool_func = t
-                break
+        Returns a dict of tool_name -> invoke_function for use with safe eval.
+        """
+        return {name: fn for name, fn in self._tool_registry.items() if fn is not None}
+
+    def _ast_is_safe_literal(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Constant):
+            return True
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return all(self._ast_is_safe_literal(elt) for elt in node.elts)
+        if isinstance(node, ast.Dict):
+            return all(
+                (k is None or self._ast_is_safe_literal(k)) and self._ast_is_safe_literal(v)
+                for k, v in zip(node.keys, node.values)
+            )
+        return False
+
+    def _ast_is_safe_call(self, node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+
+        # Allow simple function calls: tool_name(...)
+        if isinstance(node.func, ast.Name):
+            pass  # Valid: direct function name
+        elif isinstance(node.func, ast.Attribute):
+            # Allow tool_name.invoke(...) for legacy compatibility
+            if not (isinstance(node.func.value, ast.Name) and node.func.attr == "invoke"):
+                return False
+        else:
+            return False
+
+        if len(node.args) > 1:
+            return False
+        if any(kw.arg is None for kw in node.keywords):
+            return False
+
+        for arg in node.args:
+            if not self._ast_is_safe_literal(arg):
+                return False
+        for kw in node.keywords:
+            if not self._ast_is_safe_literal(kw.value):
+                return False
+        return True
+
+    async def _execute_tool_call_expr(self, call_str: str) -> tuple[str, Any]:
+        """Execute a tool call expressed as a Python expression.
+
+        Supports expressions like:
+        - tool_name("query")
+        - tool_name(query="query")
+        - tool_name.invoke("query")
+        - execute_command(command="dir")
+        """
+        expr = (call_str or "").strip()
+        if expr.startswith("await "):
+            expr = expr[len("await "):].strip()
+
+        parsed = ast.parse(expr, mode="eval")
+        if not self._ast_is_safe_call(parsed.body):
+            raise ValueError("Unsafe or unsupported tool call expression")
+
+        # Determine display name
+        if isinstance(parsed.body.func, ast.Name):
+            display = parsed.body.func.id
+        else:
+            display = parsed.body.func.value.id
+
+        env = self._tool_env()
+        if display not in env:
+            raise ValueError(f"Tool {display} not found")
+
+        result = eval(compile(parsed, filename="<tool_call>", mode="eval"), {"__builtins__": {}}, env)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return display, result
+
+    async def _execute_tool(self, tool_name: str, tool_args: dict) -> str:
+        """Execute a tool by name using the unified tool registry.
         
-        if not tool_func:
+        The registry stores invoke functions directly, so we simply call them.
+        The invoke function encapsulates the tool type logic.
+        """
+        invoke_fn = self.get_tool(tool_name)
+
+        if invoke_fn is None:
             return f"Error: Tool {tool_name} not found."
-        
-        # Emit: tool_call
-        await self._emit_event("tool_call", {
-            "tool_name": tool_name,
-            "args": tool_args,
-            "agent": self.name
-        })
-        
-        await self._emit_event("status", {
-            "agent": self.name,
-            "state": "executing",
-            "message": f"Executing {tool_name}..."
-        })
-        
+
         try:
             logger.info(f"Executing tool: {tool_name} with {tool_args}")
-            
-            result = None
-            
-            # Handle MCP Tools (dict tools with mcp_tool key)
-            if tool_func == "mcp" and tool_dict and "mcp_tool" in tool_dict:
-                # Get the toolkit from chrome_agent module
-                # This is a bit of a hack, but it works for now
-                # In production, we'd want to pass the toolkit reference more cleanly
-                try:
-                    from agents.chrome_agent import chrome_toolkit
-                    result = await chrome_toolkit.call_tool(tool_name, tool_args)
-                except Exception as e:
-                    result = f"Error calling MCP tool {tool_name}: {e}"
-            
-            # Handle Sub-Agents (BaseContext instances)
-            elif isinstance(tool_func, BaseContext):
-                sub_query = tool_args.get("query")
-                if not sub_query:
-                    vals = list(tool_args.values())
-                    if vals:
-                        sub_query = vals[0]
-                
-                if not sub_query:
-                    result = "Error: Sub-agent tool requires a 'query' argument."
-                else:
-                    res_obj = await tool_func.invoke(str(sub_query))
-                    if hasattr(res_obj, "action") and res_obj.action == "tool":
-                        result = f"Error: {tool_func.name} stopped prematurely while trying to execute: {res_obj.answer}. Task incomplete."
-                    elif hasattr(res_obj, "answer"):
-                        result = res_obj.answer
-                    else:
-                        result = str(res_obj)
-            
-            # Handle Direct Callables
-            elif callable(tool_func):
-                if asyncio.iscoroutinefunction(tool_func):
-                    result = await tool_func(**tool_args)
-                else:
-                    result = tool_func(**tool_args)
+
+            # Call the invoke function with the provided arguments
+            if inspect.iscoroutinefunction(invoke_fn):
+                result = await invoke_fn(**tool_args)
             else:
-                result = f"Error: Tool {tool_name} is not executable"
+                result = invoke_fn(**tool_args)
             
-            # Emit: tool_result
-            await self._emit_event("tool_result", {
-                "tool_name": tool_name,
-                "success": True,
-                "agent": self.name
-            })
+            # Handle response objects from sub-agents
+            if hasattr(result, "action") and result.action == "tool":
+                return f"Error: {tool_name} stopped prematurely: {getattr(result, 'response', str(result))}"
+            elif hasattr(result, "response"):
+                return str(result.response)
             
-            await self._emit_event("status", {
-                "agent": self.name,
-                "state": "thinking",
-                "message": f"{self.name} analyzing tool result..."
-            })
-            
-            await self._emit_event("log", {
-                "level": "info",
-                "content": f"Tool {tool_name} returned: {str(result)[:180]}",
-                "agent": self.name
-            })
-            
-            return result
-        
+            return str(result) if result is not None else ""
+
         except Exception as e:
             err = f"Error executing tool {tool_name}: {e}"
-            await self._emit_event("tool_result", {
-                "tool_name": tool_name,
-                "success": False,
-                "agent": self.name
-            })
-            await self._emit_event("log", {
-                "level": "error",
-                "content": err,
-                "agent": self.name
-            })
+            logger.error(err)
             return err
-    
+
     async def execute_tool_calls(self, tool_calls_str: str) -> str:
-        """Execute tool calls described in a tool-call string and return an observation string."""
+        """Parse and execute one or more tool calls with parallel execution.
+        
+        Multiple tool calls on separate lines are executed concurrently
+        using asyncio.gather for improved performance.
+        
+        Supports formats:
+        - await agent_name.invoke("query") - for sub-agent context tools (legacy)
+        - tool_name({"param": "value"}) - for all tool types (preferred)
+        """
         raw = (tool_calls_str or "").strip()
         tool_calls = self._parse_tool_calls(raw)
-        
+
+        # Primary path: Python-expression tool calls via safe AST eval
+        # This handles "await agent.invoke('query')" format naturally
         if not tool_calls:
-            return f"Error: Could not parse tool call from: {raw[:100]}"
+            lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+            if not lines:
+                return "Error: Empty tool call."
+
+            # Execute multiple lines in parallel
+            async def execute_line(line: str) -> str:
+                try:
+                    name, result = await self._execute_tool_call_expr(line)
+                    if hasattr(result, "response"):
+                        return f"{name}: {result.response}"
+                    return f"{name}: {result}"
+                except Exception as e:
+                    return f"Error: Could not parse/execute tool call: {line[:120]} ({type(e).__name__}: {e})"
+            
+            results = await asyncio.gather(*[execute_line(line) for line in lines])
+            return "\n".join(results)
+
+        # Fallback path: parsed tool calls with explicit name/args
+        # Execute in parallel using asyncio.gather
+        async def execute_parsed(name: str, args: dict) -> str:
+            return await self._execute_tool(name, args)
         
-        results = []
-        for name, args in tool_calls:
-            result = await self._execute_tool(name, args)
-            results.append(f"{name}: {result}")
+        results = await asyncio.gather(*[execute_parsed(name, args) for name, args in tool_calls])
         
-        return "\n".join(results)
+        return "\n\n".join(results)
