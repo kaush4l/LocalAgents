@@ -1,0 +1,41 @@
+{#
+  Render Template - The skeleton that assembles all prompt components.
+  
+  This template defines the structure of the final rendered prompt by
+  combining static and dynamic elements in the correct order.
+  
+  Element Types:
+    - STATIC: system_prompt (unique per agent - personality, tone, behavior)
+    - DYNAMIC: context (observations, environment state)
+    - DYNAMIC: messages (conversation history)
+    - DYNAMIC: tools (available tools with invocation instructions)
+    - SEMI-STATIC: response_instructions (JSON schema based on response_format)
+    - DYNAMIC: user_input (current query)
+#}
+{{ system_prompt }}
+
+{% if context %}
+{{ context }}
+{% endif %}
+
+{% if messages %}
+{{ messages }}
+{% endif %}
+
+{% if tools %}
+{{ tools }}
+{% endif %}
+
+{% if response_instructions %}
+## RESPONSE PROTOCOL (STRICT)
+
+{% if response_format == "toon" %}
+Use TOON/1 format (optional prefix, one key: value per line):
+{% endif %}
+{{ response_instructions }}
+{% endif %}
+{% if user_input is defined and user_input %}
+
+## USER INPUT
+{{ user_input }}
+{% endif %}
