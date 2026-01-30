@@ -20,13 +20,12 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from agents.orchestrator import initialize_orchestrator
-from core.config import settings
-from core.audio import transcription_worker
+from core import config
 from app.state import ui_state, AgentStatus
 
 # Configure logging
 logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL if hasattr(settings, 'LOG_LEVEL') else 'INFO'),
+    level=getattr(logging, config.LOG_LEVEL, 'INFO'),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -61,42 +60,9 @@ async def broadcast_event(event: dict):
     agent = data.get("agent", "System")
     content = data.get("content", data.get("message", ""))
     
-    # Map event types for UI state
-    type_mapping = {
-        "status": "status",
-        "thought": "thought", 
-        "tool_call_start": "tool_call",
-        "tool_call_end": "tool_result",
-        "response": "response",
-        "error": "error",
-        "log": "log"
-    }
-    
-    mapped_type = type_mapping.get(event_type, event_type)
-    
-    # Update agent status based on event
-    if event_type == "status":
-        state = data.get("state", "")
-        if "thinking" in state.lower():
-            ui_state.set_agent_status(agent, AgentStatus.THINKING, data.get("message", ""))
-        elif "tool:" in state.lower() or "executing" in state.lower():
-            ui_state.set_agent_status(agent, AgentStatus.EXECUTING, data.get("message", ""))
-        elif "idle" in state.lower():
-            ui_state.set_agent_status(agent, AgentStatus.IDLE)
-    
-    if event_type == "tool_call_start":
-        tool_name = data.get("tool_name", "")
-        ui_state.record_tool_use(tool_name)
-        content = f"Calling {tool_name}"
-    
-    if event_type == "tool_call_end":
-        tool_name = data.get("tool_name", "")
-        success = data.get("success", False)
-        content = f"{tool_name}: {'Success' if success else 'Failed'}"
-    
-    # Record event
+    # Record event with agent context
     if content:
-        recorded_event = ui_state.add_event(mapped_type, agent, str(content)[:500], data)
+        recorded_event = ui_state.add_event(event_type, f"[{agent}] {str(content)[:500]}", data)
         event["data"]["event_id"] = recorded_event.id
     
     # Broadcast to all clients
@@ -120,105 +86,25 @@ async def startup_event():
     """Initialize the orchestrator on startup."""
     global orchestrator
     try:
-        transcription_worker.start()
-        
-        # Preload models in background
-        import threading
-        def preload():
-            transcription_worker.preload_models([
-                "mlx-community/whisper-large-v3-turbo-fp16"
-            ])
-        threading.Thread(target=preload, daemon=True).start()
-
         orchestrator = await initialize_orchestrator()
-        orchestrator.set_event_callback(broadcast_event)
-        logger.info("Orchestrator initialized and event callback set.")
-        
-        # Register agents in UI state
-        ui_state.register_agent(
-            "Orchestrator",
-            "Alfred (Orchestrator)",
-            "Main coordinator that delegates tasks to specialized agents",
-            tools=["CommandLineAgent", "ChromeAgent"]
-        )
-        ui_state.register_agent(
-            "CommandLineAgent", 
-            "Terminal Agent",
-            "Executes shell commands and manages files",
-            tools=["execute_command", "read_file", "write_file", "list_directory"]
-        )
-        ui_state.register_agent(
-            "ChromeAgent",
-            "Browser Agent",
-            "Controls a web browser via Chrome DevTools",
-            tools=["navigate_page", "take_screenshot", "click", "evaluate_script"]
-        )
-        
-        # Register tools in UI state
-        ui_state.register_tool(
-            "execute_command",
-            "Execute a shell command",
-            "command: str, timeout: int = 60"
-        )
-        ui_state.register_tool(
-            "read_file",
-            "Read contents of a file",
-            "path: str"
-        )
-        ui_state.register_tool(
-            "write_file",
-            "Write content to a file",
-            "path: str, content: str"
-        )
-        ui_state.register_tool(
-            "list_directory",
-            "List directory contents",
-            "path: str = '.'"
-        )
-        ui_state.register_tool(
-            "navigate_page",
-            "Navigate to a URL",
-            "url: str"
-        )
-        ui_state.register_tool(
-            "take_screenshot",
-            "Take a screenshot of the current page",
-            ""
-        )
-        ui_state.register_tool(
-            "click",
-            "Click on an element",
-            "selector: str"
-        )
-        ui_state.register_tool(
-            "evaluate_script",
-            "Run JavaScript in the page",
-            "script: str"
-        )
-        
-        # Add initial event
-        ui_state.add_event("system", "System", "Orchestrator initialized successfully")
+        logger.info("Orchestrator initialized successfully.")
+        ui_state.add_event("system", "Orchestrator initialized successfully")
         
     except Exception as e:
         logger.error(f"Failed to initialize orchestrator: {e}")
-        from core.engine import ReActContext
-        orchestrator = ReActContext(
-            name="Orchestrator",
-            system_instructions="orchestrator"
-        )
-        orchestrator.set_event_callback(broadcast_event)
-        ui_state.add_event("error", "System", f"Orchestrator initialization failed: {e}")
+        ui_state.add_event("error", f"Orchestrator initialization failed: {e}")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
     logger.info("Shutting down...")
-    transcription_worker.stop()
     
-    if orchestrator:
-        if hasattr(orchestrator, "close"):
-            await orchestrator.close()
+    from agents.orchestrator import close_orchestrator
+    try:
+        await close_orchestrator()
+    except Exception as e:
+        logger.error(f"Error during close_orchestrator: {e}")
             
     for ws in list(active_websockets):
         try:
@@ -319,7 +205,6 @@ async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time chat communication."""
     await websocket.accept()
     active_websockets.add(websocket)
-    logger.info(f"Client connected. Total connections: {len(active_websockets)}")
     
     try:
         # Send full state on connection
@@ -329,37 +214,10 @@ async def websocket_endpoint(websocket: WebSocket):
             "data": ui_state.get_full_state()
         })
         
-        ui_state.add_event("system", "System", "Client connected")
+        ui_state.add_event("system", "Client connected")
         
         while True:
-            # Poll for transcription results frequently
-            current_status = transcription_worker.status
-            try:
-                # Use wait_for to check for messages but timeout quickly to check transcription queue
-                data = await asyncio.wait_for(websocket.receive(), timeout=0.1)
-            except asyncio.TimeoutError:
-                # Check for transcription results
-                transcript = transcription_worker.get_result()
-                if transcript:
-                    await websocket.send_json({
-                        "type": "transcription",
-                        "content": transcript
-                    })
-                
-                # Check for status change (simple check)
-                # In production, use a callback or event, but polling is okay here
-                if transcription_worker.status != current_status:
-                     await websocket.send_json({
-                        "type": "audio_status",
-                        "status": transcription_worker.status,
-                        "model": transcription_worker.model_path
-                    })
-                continue
-
-            # Handle Binary Data (Audio)
-            if "bytes" in data:
-                transcription_worker.push_audio(data["bytes"])
-                continue
+            data = await websocket.receive()
             
             # Handle Text Data
             if "text" in data:
@@ -381,18 +239,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     # ... (rest of message handling)
                 
-                elif command == "model_change":
-                    model_id = msg.get("model", "")
-                    if model_id:
-                        transcription_worker.set_model(model_id)
-                        await broadcast_event({
-                            "type": "log",
-                            "data": {
-                                "level": "info",
-                                "content": f"Transcription model switched to {model_id}",
-                                "agent": "System"
-                            }
-                        })
                     ui_state.is_processing = True
                     ui_state.current_query = user_text
                     
@@ -475,12 +321,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
     
     except WebSocketDisconnect:
-        logger.info("Client disconnected normally")
+        pass
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
         active_websockets.discard(websocket)
-        logger.info(f"Client removed. Total connections: {len(active_websockets)}")
 
 
 # Run with: uvicorn app.main:app --reload --port 8000
