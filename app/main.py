@@ -45,9 +45,6 @@ app.add_middleware(
 templates = Jinja2Templates(directory="app/templates")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
-# Global orchestrator
-orchestrator = None
-
 # Active WebSocket connections
 active_websockets: set[WebSocket] = set()
 
@@ -59,7 +56,7 @@ async def broadcast_event(event: dict):
     data = event.get("data", {})
     agent = data.get("agent", "System")
     content = data.get("content", data.get("message", ""))
-    
+
     # Record event with agent context
     if content:
         recorded_event = ui_state.add_event(event_type, f"[{agent}] {str(content)[:500]}", data)
@@ -84,13 +81,13 @@ async def broadcast_event(event: dict):
 @app.on_event("startup")
 async def startup_event():
     """Initialize the orchestrator on startup."""
-    global orchestrator
     try:
         orchestrator = await initialize_orchestrator()
         logger.info("Orchestrator initialized successfully.")
         ui_state.add_event("system", "Orchestrator initialized successfully")
-        
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         logger.error(f"Failed to initialize orchestrator: {e}")
         ui_state.add_event("error", f"Orchestrator initialization failed: {e}")
 
@@ -117,8 +114,7 @@ async def shutdown_event():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Serve the main chatbot UI."""
-    return templates.TemplateResponse("index.j2", {
-        "request": request,
+    return templates.TemplateResponse(request=request, name="index.j2", context={
         "state": ui_state.get_full_state()
     })
 
@@ -243,7 +239,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     ui_state.current_query = user_text
                     
                     # Add query event
-                    ui_state.add_event("query", "User", user_text)
+                    ui_state.add_event("query", user_text)
                     
                     # Broadcast user message
                     await broadcast_event({
@@ -253,7 +249,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     
                     # Update orchestrator status
-                    ui_state.set_agent_status("Orchestrator", AgentStatus.THINKING, "Processing query...")
+                    # ui_state.set_agent_status("Orchestrator", AgentStatus.THINKING, "Processing query...")
                     
                     await broadcast_event({
                         "type": "status",
@@ -275,7 +271,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         ui_state.current_query = ""
                         
                         # Update agent status
-                        ui_state.set_agent_status("Orchestrator", AgentStatus.COMPLETED)
+                        # ui_state.set_agent_status("Orchestrator", AgentStatus.COMPLETED)
                         
                         # Send final response
                         await broadcast_event({
@@ -289,14 +285,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         
                         # Reset to idle after a moment
                         await asyncio.sleep(0.5)
-                        ui_state.set_agent_status("Orchestrator", AgentStatus.IDLE)
-                        ui_state.set_agent_status("CommandLineAgent", AgentStatus.IDLE)
+                        # ui_state.set_agent_status("Orchestrator", AgentStatus.IDLE)
+                        # ui_state.set_agent_status("CommandLineAgent", AgentStatus.IDLE)
                         
                     except Exception as e:
                         logger.error(f"Orchestrator error: {e}")
                         ui_state.is_processing = False
-                        ui_state.set_agent_status("Orchestrator", AgentStatus.ERROR, str(e))
-                        ui_state.add_event("error", "Orchestrator", str(e))
+                        ui_state.add_event("error", str(e))
                         
                         await broadcast_event({
                             "type": "error",
