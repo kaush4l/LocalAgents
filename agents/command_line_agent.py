@@ -1,5 +1,8 @@
 """
 Command Line Agent - Specialized agent for executing shell commands.
+
+Pre-loads all command line tools in memory and creates a single agent instance.
+All tools are included at module initialization time.
 """
 from core.engine import ReActContext
 from core.responses import ReActResponse
@@ -7,10 +10,10 @@ from core.config import settings
 from core.tools import execute_command
 
 
-# Define tools for this agent
+# Define tools for this agent (pre-loaded in memory)
 tools = [execute_command]
 
-# Initialize the agent
+# Create the Command Line agent instance with all tools pre-loaded
 command_line_agent = ReActContext(
     name="command_line_agent",
     description="An agent capable of executing shell commands and managing files on the local system.",

@@ -8,6 +8,7 @@ import os
 import subprocess
 from typing import Optional
 from fastmcp import Client
+from .retry import retry_async, TOOL_RETRY
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,6 @@ class MCPToolkit:
         command = self.server_config.get("command")
         args = self.server_config.get("args", [])
         
-        # FastMCP Client expects a config.
         config = {
             "mcpServers": {
                 "server": {
@@ -34,19 +34,11 @@ class MCPToolkit:
             }
         }
         
-        try:
-            logger.info(f"Initializing MCP toolkit with command: {command} {' '.join(args)}")
-            self.client = Client(config)
-            await self.client.__aenter__()
-            available_tools = await self.client.list_tools()
-            self._tools = available_tools
-            logger.info(f"MCP toolkit initialized with {len(self._tools)} tools")
-            return self._tools
-        except Exception as e:
-            self.last_error = str(e)
-            self._tools = []
-            logger.error(f"Failed to initialize MCP toolkit: {type(e).__name__}: {e}")
-            return self._tools
+        self.client = Client(config)
+        await self.client.__aenter__()
+        self._tools = await self.client.list_tools()
+        logger.info(f"MCP toolkit initialized with {len(self._tools)} tools")
+        return self._tools
 
     def get_tools(self, selected_tool_names: list = None):
         """Return a list of tools, optionally filtered by name."""
@@ -59,33 +51,25 @@ class MCPToolkit:
         return selected
 
     async def call_tool(self, name: str, arguments: dict):
-        """Call a specific tool."""
+        """Call a specific tool with retry on transient failures."""
         if not self.client:
-            logger.error("Toolkit not initialized when calling tool")
             return "Error: Toolkit not initialized. Call initialize() first."
-        try:
-            logger.debug(f"Calling tool: {name} with args: {arguments}")
+        
+        async def _call():
             result = await self.client.call_tool(name, arguments)
-            # Convert result to string for the engine's observation
             if hasattr(result, "content"):
-                output = "\n".join([c.text for c in result.content if hasattr(c, "text")])
-                logger.debug(f"Tool {name} returned: {output[:100]}...")
-                return output
-            logger.debug(f"Tool {name} returned: {str(result)[:100]}...")
+                return "\n".join([c.text for c in result.content if hasattr(c, "text")])
             return str(result)
+        
+        try:
+            return await retry_async(_call, TOOL_RETRY)
         except Exception as e:
             self.last_error = str(e)
-            logger.error(f"Tool call failed for {name}: {type(e).__name__}: {e}")
             return f"Error calling tool {name}: {e}"
 
     async def close(self):
         if self.client:
-            try:
-                await self.client.__aexit__(None, None, None)
-                logger.info("MCP toolkit closed successfully")
-            except Exception as e:
-                self.last_error = str(e)
-                logger.error(f"Error closing MCP toolkit: {e}")
+            await self.client.__aexit__(None, None, None)
 
 
 def format_tool_for_engine(mcp_tool):
@@ -170,11 +154,9 @@ async def execute_command(command: str, timeout: int = 60) -> str:
             parts.append(f"EXIT CODE: {process.returncode}")
         
         result = "\n\n".join(parts) if parts else "Command executed successfully (no output)."
-        logger.debug(f"Command completed: {result[:100]}...")
         return result
         
     except Exception as e:
-        logger.error(f"Command execution failed: {type(e).__name__}: {e}")
         return f"Error executing command: {e}"
 
 
@@ -285,3 +267,26 @@ def get_tool(name: str):
 def available_tools() -> list:
     """Return list of available tool names."""
     return list(AVAILABLE_TOOLS.keys())
+
+
+# Global toolkit registry for MCP toolkits (decouples engine from agents)
+_toolkit_registry: dict[str, "MCPToolkit"] = {}
+
+
+def register_toolkit(name: str, toolkit: "MCPToolkit"):
+    """Register an MCP toolkit for use by the engine."""
+    _toolkit_registry[name] = toolkit
+
+
+def get_toolkit(name: str) -> Optional["MCPToolkit"]:
+    """Get a registered toolkit by name."""
+    return _toolkit_registry.get(name)
+
+
+def get_any_toolkit() -> Optional["MCPToolkit"]:
+    """Get any available toolkit (for MCP tool execution)."""
+    for toolkit in _toolkit_registry.values():
+        if toolkit.client:
+            return toolkit
+    return None
+

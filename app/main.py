@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from agents.orchestrator import initialize_orchestrator
+from agents.orchestrator import orchestrator
 from core.config import settings
 from core.audio import transcription_worker
 from app.state import ui_state, AgentStatus
@@ -45,9 +45,6 @@ app.add_middleware(
 # Templates and static files
 templates = Jinja2Templates(directory="app/templates")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
-# Global orchestrator
-orchestrator = None
 
 # Active WebSocket connections
 active_websockets: set[WebSocket] = set()
@@ -77,16 +74,12 @@ async def broadcast_event(event: dict):
     # Update agent status based on event
     if event_type == "status":
         state = data.get("state", "")
-        if "thinking" in state.lower():
-            ui_state.set_agent_status(agent, AgentStatus.THINKING, data.get("message", ""))
-        elif "tool:" in state.lower() or "executing" in state.lower():
-            ui_state.set_agent_status(agent, AgentStatus.EXECUTING, data.get("message", ""))
-        elif "idle" in state.lower():
-            ui_state.set_agent_status(agent, AgentStatus.IDLE)
+        # Status handling (UIState doesn't have set_agent_status yet)
+        pass
     
     if event_type == "tool_call_start":
         tool_name = data.get("tool_name", "")
-        ui_state.record_tool_use(tool_name)
+        # ui_state.record_tool_use(tool_name)  # Method doesn't exist yet
         content = f"Calling {tool_name}"
     
     if event_type == "tool_call_end":
@@ -96,7 +89,7 @@ async def broadcast_event(event: dict):
     
     # Record event
     if content:
-        recorded_event = ui_state.add_event(mapped_type, agent, str(content)[:500], data)
+        recorded_event = ui_state.add_event(mapped_type, str(content)[:500], {"agent": agent, **data})
         event["data"]["event_id"] = recorded_event.id
     
     # Broadcast to all clients
@@ -118,7 +111,6 @@ async def broadcast_event(event: dict):
 @app.on_event("startup")
 async def startup_event():
     """Initialize the orchestrator on startup."""
-    global orchestrator
     try:
         transcription_worker.start()
         
@@ -130,84 +122,20 @@ async def startup_event():
             ])
         threading.Thread(target=preload, daemon=True).start()
 
-        orchestrator = await initialize_orchestrator()
+        # Orchestrator is already initialized when module is imported
         orchestrator.set_event_callback(broadcast_event)
-        logger.info("Orchestrator initialized and event callback set.")
-        
-        # Register agents in UI state
-        ui_state.register_agent(
-            "Orchestrator",
-            "Alfred (Orchestrator)",
-            "Main coordinator that delegates tasks to specialized agents",
-            tools=["CommandLineAgent", "ChromeAgent"]
-        )
-        ui_state.register_agent(
-            "CommandLineAgent", 
-            "Terminal Agent",
-            "Executes shell commands and manages files",
-            tools=["execute_command", "read_file", "write_file", "list_directory"]
-        )
-        ui_state.register_agent(
-            "ChromeAgent",
-            "Browser Agent",
-            "Controls a web browser via Chrome DevTools",
-            tools=["navigate_page", "take_screenshot", "click", "evaluate_script"]
-        )
-        
-        # Register tools in UI state
-        ui_state.register_tool(
-            "execute_command",
-            "Execute a shell command",
-            "command: str, timeout: int = 60"
-        )
-        ui_state.register_tool(
-            "read_file",
-            "Read contents of a file",
-            "path: str"
-        )
-        ui_state.register_tool(
-            "write_file",
-            "Write content to a file",
-            "path: str, content: str"
-        )
-        ui_state.register_tool(
-            "list_directory",
-            "List directory contents",
-            "path: str = '.'"
-        )
-        ui_state.register_tool(
-            "navigate_page",
-            "Navigate to a URL",
-            "url: str"
-        )
-        ui_state.register_tool(
-            "take_screenshot",
-            "Take a screenshot of the current page",
-            ""
-        )
-        ui_state.register_tool(
-            "click",
-            "Click on an element",
-            "selector: str"
-        )
-        ui_state.register_tool(
-            "evaluate_script",
-            "Run JavaScript in the page",
-            "script: str"
-        )
+        logger.info("Orchestrator ready with event callback set.")
         
         # Add initial event
-        ui_state.add_event("system", "System", "Orchestrator initialized successfully")
+        ui_state.add_event("system", "Orchestrator initialized successfully")
         
     except Exception as e:
         logger.error(f"Failed to initialize orchestrator: {e}")
-        from core.engine import ReActContext
-        orchestrator = ReActContext(
-            name="Orchestrator",
-            system_instructions="orchestrator"
-        )
-        orchestrator.set_event_callback(broadcast_event)
-        ui_state.add_event("error", "System", f"Orchestrator initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
+        ui_state.add_event("error", f"Orchestrator initialization failed: {e}")
+
+
 
 
 @app.on_event("shutdown")
@@ -231,8 +159,7 @@ async def shutdown_event():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Serve the main chatbot UI."""
-    return templates.TemplateResponse("index.j2", {
-        "request": request,
+    return templates.TemplateResponse(request=request, name="index.j2", context={
         "state": ui_state.get_full_state()
     })
 
@@ -329,7 +256,7 @@ async def websocket_endpoint(websocket: WebSocket):
             "data": ui_state.get_full_state()
         })
         
-        ui_state.add_event("system", "System", "Client connected")
+        ui_state.add_event("system", "Client connected")
         
         while True:
             # Poll for transcription results frequently
@@ -397,7 +324,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     ui_state.current_query = user_text
                     
                     # Add query event
-                    ui_state.add_event("query", "User", user_text)
+                    ui_state.add_event("query", user_text)
                     
                     # Broadcast user message
                     await broadcast_event({
@@ -407,7 +334,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     
                     # Update orchestrator status
-                    ui_state.set_agent_status("Orchestrator", AgentStatus.THINKING, "Processing query...")
+                    # ui_state.set_agent_status("Orchestrator", AgentStatus.THINKING, "Processing query...")
                     
                     await broadcast_event({
                         "type": "status",
@@ -429,7 +356,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         ui_state.current_query = ""
                         
                         # Update agent status
-                        ui_state.set_agent_status("Orchestrator", AgentStatus.COMPLETED)
+                        # ui_state.set_agent_status("Orchestrator", AgentStatus.COMPLETED)
                         
                         # Send final response
                         await broadcast_event({
@@ -443,14 +370,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         
                         # Reset to idle after a moment
                         await asyncio.sleep(0.5)
-                        ui_state.set_agent_status("Orchestrator", AgentStatus.IDLE)
-                        ui_state.set_agent_status("CommandLineAgent", AgentStatus.IDLE)
+                        # ui_state.set_agent_status("Orchestrator", AgentStatus.IDLE)
+                        # ui_state.set_agent_status("CommandLineAgent", AgentStatus.IDLE)
                         
                     except Exception as e:
                         logger.error(f"Orchestrator error: {e}")
                         ui_state.is_processing = False
-                        ui_state.set_agent_status("Orchestrator", AgentStatus.ERROR, str(e))
-                        ui_state.add_event("error", "Orchestrator", str(e))
+                        ui_state.add_event("error", str(e))
                         
                         await broadcast_event({
                             "type": "error",

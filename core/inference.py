@@ -2,12 +2,13 @@
 Inference module for LLM invocation.
 Supports multiple backends: LM Studio, OpenAI, and local testing.
 """
-import os
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 from openai import OpenAI
 from .config import settings
+from .retry import retry_async, INFERENCE_RETRY
+from .errors import classify_error
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +42,10 @@ async def invoke(
     
     logger.debug(f"Invoking {model} with prompt of {len(prompt)} chars")
     
-    try:
+    async def _call():
         return await _invoke_llm(prompt, model, response_model)
-    except Exception as e:
-        logger.error(f"Inference failed for {model}: {e}")
-        raise
+    
+    return await retry_async(_call, INFERENCE_RETRY)
 
 
 async def _invoke_llm(prompt: str, model: str, response_model: Optional[type] = None) -> Any:

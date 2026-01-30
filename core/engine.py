@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from .config import settings
 from .responses import BaseResponse, ReActResponse, Message
+from .tools import get_any_toolkit
 
 logger = logging.getLogger(__name__)
 
@@ -477,14 +478,11 @@ class ReActContext(BaseContext):
             
             # Handle MCP Tools (dict tools with mcp_tool key)
             if tool_func == "mcp" and tool_dict and "mcp_tool" in tool_dict:
-                # Get the toolkit from chrome_agent module
-                # This is a bit of a hack, but it works for now
-                # In production, we'd want to pass the toolkit reference more cleanly
-                try:
-                    from agents.chrome_agent import chrome_toolkit
-                    result = await chrome_toolkit.call_tool(tool_name, tool_args)
-                except Exception as e:
-                    result = f"Error calling MCP tool {tool_name}: {e}"
+                toolkit = get_any_toolkit()
+                if not toolkit:
+                    result = f"Error: No MCP toolkit available for {tool_name}"
+                else:
+                    result = await toolkit.call_tool(tool_name, tool_args)
             
             # Handle Sub-Agents (BaseContext instances)
             elif isinstance(tool_func, BaseContext):
@@ -537,16 +535,7 @@ class ReActContext(BaseContext):
         
         except Exception as e:
             err = f"Error executing tool {tool_name}: {e}"
-            await self._emit_event("tool_result", {
-                "tool_name": tool_name,
-                "success": False,
-                "agent": self.name
-            })
-            await self._emit_event("log", {
-                "level": "error",
-                "content": err,
-                "agent": self.name
-            })
+            logger.warning(f"Tool {tool_name} failed: {e}")
             return err
     
     async def execute_tool_calls(self, tool_calls_str: str) -> str:
