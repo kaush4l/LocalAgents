@@ -7,6 +7,7 @@ import logging
 from typing import Any, Optional
 from openai import OpenAI
 from . import config
+from .retry import retry_async, INFERENCE_RETRY
 
 logger = logging.getLogger(__name__)
 
