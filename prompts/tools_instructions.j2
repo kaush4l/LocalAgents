@@ -1,0 +1,48 @@
+## AVAILABLE TOOLS
+{% if tools %}
+{% for tool in tools %}
+
+### {{ tool.name }}
+**Description**: {{ tool.description }}
+{% if tool.parameters %}
+**Parameters**:
+```
+{{ tool.parameters }}
+```
+{% endif %}
+**Invocation**:
+```
+{{ tool.invocation_example }}
+```
+{% endfor %}
+{% else %}
+*(No tools available)*
+{% endif %}
+
+## TOOL INVOCATION PROTOCOL
+
+### Single Tool Call
+When `action="tool"`, place the exact invocation in the `response` field:
+```json
+{
+    "action": "tool",
+    "response": "tool_name({\"param\": \"value\"})"
+}
+```
+
+### Multiple Tool Calls (Parallel Execution)
+To execute multiple independent tools simultaneously, list each invocation on a separate line:
+```json
+{
+    "action": "tool",
+    "response": "tool_a({\"x\": 1})\ntool_b({\"y\": 2})"
+}
+```
+All tools will execute in parallel and results will be combined.
+
+### Invocation Rules
+1. **Exact Names**: Use tool names exactly as documented above.
+2. **Complete Parameters**: Include all required parameters with correct types.
+3. **JSON Format**: Parameters must be valid JSON objects.
+4. **No Markdown**: Do not wrap invocations in code blocks within the response field.
+
