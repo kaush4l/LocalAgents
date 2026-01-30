@@ -60,39 +60,19 @@ async def _invoke_llm(prompt: str, model: str, response_model: Optional[type] = 
         else:
             client = OpenAI()
             
-        if response_model:
-            try:
-                # Use the latest structured response API when supported by the backend
-                response = client.beta.chat.completions.parse(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format=response_model,
-                    max_tokens=config.MAX_TOKENS,
-                    temperature=0.7,
-                )
-                return response.choices[0].message.parsed
-            except Exception as e:
-                # Some OpenAI-compatible backends do not reliably produce valid JSON.
-                # Fall back to plain text and parse best-effort via BaseResponse.from_raw.
-                logger.warning(f"Structured parse failed; falling back to text: {type(e).__name__}: {e}")
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=config.MAX_TOKENS,
-                    temperature=0.7,
-                )
-                text = response.choices[0].message.content or ""
-                if isinstance(response_model, type) and issubclass(response_model, BaseResponse):
-                    return response_model.from_raw(text)
-                return text
-
-        # Regular completion
+        # Always request plain text from the backend and parse locally.
+        # This avoids backend-dependent structured parsing and removes the
+        # low-value try/except fallback layer.
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=config.MAX_TOKENS,
             temperature=0.7,
         )
-        return response.choices[0].message.content or ""
+        text = response.choices[0].message.content or ""
+
+        if response_model and isinstance(response_model, type) and issubclass(response_model, BaseResponse):
+            return response_model.from_raw(text)
+        return text
     
     return await loop.run_in_executor(None, _call)

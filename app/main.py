@@ -81,15 +81,9 @@ async def broadcast_event(event: dict):
 @app.on_event("startup")
 async def startup_event():
     """Initialize the orchestrator on startup."""
-    try:
-        orchestrator = await initialize_orchestrator()
-        logger.info("Orchestrator initialized successfully.")
-        ui_state.add_event("system", "Orchestrator initialized successfully")
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        logger.error(f"Failed to initialize orchestrator: {e}")
-        ui_state.add_event("error", f"Orchestrator initialization failed: {e}")
+    orchestrator = await initialize_orchestrator()
+    logger.info("Orchestrator initialized successfully.")
+    ui_state.add_event("system", "Orchestrator initialized successfully")
 
 
 @app.on_event("shutdown")
@@ -98,16 +92,10 @@ async def shutdown_event():
     logger.info("Shutting down...")
     
     from agents.orchestrator import close_orchestrator
-    try:
-        await close_orchestrator()
-    except Exception as e:
-        logger.error(f"Error during close_orchestrator: {e}")
+    await close_orchestrator()
             
     for ws in list(active_websockets):
-        try:
-            await ws.close()
-        except Exception:
-            pass
+        await ws.close()
     active_websockets.clear()
 
 

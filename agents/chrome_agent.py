@@ -1,13 +1,4 @@
-"""
-Chrome Agent - Specialized agent for browser automation using Chrome DevTools MCP.
-
-This module initializes a `chrome_agent` ReActContext via an async setup
-function which connects to a local MCP server (via `get_mcp_toolkit`) and
-registers a small set of browser control tools.
-
-If initialization fails the module falls back to a minimal `chrome_agent`
-instance with no tools so the rest of the system can still import it.
-"""
+"""Chrome Agent - Specialized agent for browser automation using Chrome DevTools MCP."""
 import logging
 import asyncio
 
@@ -28,11 +19,7 @@ async def _setup_chrome_agent():
 
     toolkit = get_mcp_toolkit(server_config)
     logger.info("Initializing Chrome MCP Toolkit...")
-    try:
-        await toolkit.initialize()
-    except Exception as e:
-        logger.error(f"Failed to initialize MCP toolkit: {e}")
-        raise
+    await toolkit.initialize()
 
     # Pick a small set of useful browser tools
     selected_names = ["navigate_page", "take_screenshot", "click", "evaluate_script"]
@@ -58,17 +45,6 @@ async def _setup_chrome_agent():
     return agent
 
 
-# Initialize the chrome_agent on import if possible, otherwise fallback
-try:
-    chrome_agent = asyncio.run(_setup_chrome_agent())
-except Exception:
-    logger.exception("Chrome agent initialization failed; creating fallback agent")
-    chrome_agent = ReActContext(
-        name="chrome_agent",
-        description="An agent capable of controlling a browser via Chrome DevTools.",
-        system_instructions="chrome_agent",
-        model_id=config.MODEL_ID,
-        tools=[],
-        response_model=ReActResponse,
-        response_format="toon",
-    )
+# Initialize the chrome_agent on import.
+# In this project we prefer failing fast on misconfiguration.
+chrome_agent = asyncio.run(_setup_chrome_agent())
