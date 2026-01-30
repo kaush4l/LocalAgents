@@ -1,6 +1,11 @@
 """
 Server-side state management for the UI.
-Stores user preferences, agent states, and event history.
+Stores user preferences, agent states, and conversation history.
+
+Conversation State Management:
+- User messages are stored as-is
+- Agent messages store only action + answer (observe/think are discarded)
+- Tool results are appended as the result of the action
 """
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,6 +30,7 @@ class AgentStatus(str, Enum):
 
 @dataclass
 class Event:
+    """Event for the UI event log (debugging/monitoring)."""
     type: str  # query, thought, tool_call, tool_result, response, error, status, log
     timestamp: str
     content: str
@@ -39,18 +45,22 @@ class Event:
         }
 
 
-# The Message class is now imported from core.responses
-
-
 class UIState:
-    """Global UI state manager - stores all state server-side."""
+    """Global UI state manager - stores all state server-side.
+    
+    Manages:
+    - UI preferences (theme, panels)
+    - Event log (for debugging)
+    - Chat messages
+    - Processing state
+    """
     
     def __init__(self):
         self.theme: ThemeMode = ThemeMode.DARK
         self.sidebar_open: bool = True
         self.events_panel_open: bool = True
         
-        # Event log (limited to last 100)
+        # Event log for debugging (limited to last 100)
         self.events: list[Event] = []
         
         # Chat messages
@@ -61,7 +71,7 @@ class UIState:
         self.current_query: str = ""
     
     def add_event(self, event_type: str, content: str, metadata: dict = None) -> Event:
-        """Add an event to the log."""
+        """Add an event to the debug log."""
         event = Event(
             type=event_type,
             timestamp=datetime.utcnow().isoformat() + "Z",
@@ -76,10 +86,7 @@ class UIState:
     
     def add_message(self, role: str, content: str) -> Message:
         """Add a chat message."""
-        message = Message(
-            role=role,
-            content=content
-        )
+        message = Message(role=role, content=content)
         self.messages.append(message)
         return message
     
@@ -103,12 +110,12 @@ class UIState:
             "theme": self.theme.value,
             "sidebar_open": self.sidebar_open,
             "events_panel_open": self.events_panel_open,
-            "events": [e.to_dict() for e in self.events[-50:]],  # Last 50 events
+            "events": [e.to_dict() for e in self.events[-50:]],
             "messages": [m.model_dump() for m in self.messages],
             "is_processing": self.is_processing,
             "current_query": self.current_query
         }
 
 
-# Global UI state instance
+# Global UI state instance (initialized once at import)
 ui_state = UIState()
