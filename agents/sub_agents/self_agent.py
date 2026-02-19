@@ -133,4 +133,5 @@ self_agent = ReActAgent(
     ),
     system_instructions="self_agent",
     tools=tools,
+    max_iterations=3,
 )

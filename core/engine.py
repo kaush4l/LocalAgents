@@ -309,7 +309,14 @@ class ReActAgent(BaseAgent):
     Repeats until ``action == "answer"`` or max iterations reached.
     """
 
+    max_iterations: int = Field(
+        default_factory=lambda: int(os.getenv("MAX_ITERATIONS", str(_DEFAULT_MAX_ITERATIONS)))
+    )
+
     async def invoke(self, query: str) -> Any:
+        # Clear history between invocations to prevent cross-request pollution
+        self.history.clear()
+
         with observability.trace_scope(
             self.name,
             query,
@@ -317,7 +324,7 @@ class ReActAgent(BaseAgent):
         ) as trace_id:
             self.history.append(Message(role="user", content=query))
 
-            max_iters = int(os.getenv("MAX_ITERATIONS", str(_DEFAULT_MAX_ITERATIONS)))
+            max_iters = self.max_iterations
             for iteration in range(max_iters):
                 idx = iteration + 1
                 prompt = self.render(query)
