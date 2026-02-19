@@ -1,0 +1,246 @@
+{% extends "base.j2" %}
+{% set active_page = "chat" %}
+
+{% block title %}Chat — LocalAgents{% endblock %}
+
+{% block content %}
+<div class="chat-layout">
+    <!-- Left: Chat panel -->
+    <div class="chat-panel">
+        <div class="chat-messages" id="chatMessages">
+            {% for msg in state.messages %}
+            <div class="message message-{{ msg.role }}">
+                <div class="message-header">
+                    <span class="message-role">{{ msg.role | upper }}</span>
+                    <span class="message-ts">{{ msg.timestamp if msg.timestamp else '' }}</span>
+                </div>
+                <div class="message-content">{{ msg.content }}</div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="chat-status" id="chatStatus" style="display: none;">
+            <div class="status-indicator">
+                <span class="status-dots">
+                    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                </span>
+                <span id="statusText">Thinking...</span>
+            </div>
+        </div>
+
+        <form class="chat-input-form" id="chatForm" onsubmit="sendMessage(event)">
+            <input type="text"
+                   id="chatInput"
+                   class="chat-input"
+                   placeholder="Ask anything..."
+                   autocomplete="off"
+                   autofocus>
+            <button type="submit" class="btn btn-primary" id="sendBtn">Send</button>
+            <button type="button" class="btn btn-ghost" onclick="clearChat()" title="Clear chat">🗑️</button>
+        </form>
+    </div>
+
+    <!-- Right: Activity feed -->
+    <div class="activity-panel" id="activityPanel">
+        <div class="activity-header">
+            <span class="activity-title">⚡ Activity</span>
+            <div class="activity-controls">
+                <button class="btn btn-ghost btn-sm" onclick="clearSteps()" title="Clear">🗑️</button>
+            </div>
+        </div>
+        <div class="activity-body" id="activityBody">
+            <div class="activity-empty" id="activityEmpty">
+                <span class="activity-empty-icon">📋</span>
+                <span>Steps will appear here</span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const messagesEl  = document.getElementById('chatMessages');
+    const statusEl    = document.getElementById('chatStatus');
+    const statusText  = document.getElementById('statusText');
+    const inputEl     = document.getElementById('chatInput');
+    const sendBtn     = document.getElementById('sendBtn');
+    const activityBody  = document.getElementById('activityBody');
+    const activityEmpty = document.getElementById('activityEmpty');
+
+    // ── Dedup guard ───────────────────────────────────────────────────
+    let _lastMsgKey = '';
+    let _lastStepKey = '';
+    let inFlight = false;
+    let _lastSentText = '';
+    let _lastSentAt = 0;
+
+    function nextRequestId() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID();
+        }
+        return `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
+
+    function scrollToBottom() {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function appendMessage(role, content) {
+        if (!content || content.trim() === '') return;
+
+        // Dedup: skip if this exact role+content was the last message appended
+        const key = `${role}::${content}`;
+        if (key === _lastMsgKey) return;
+        _lastMsgKey = key;
+
+        const div = document.createElement('div');
+        div.className = `message message-${role}`;
+        const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        div.innerHTML = `
+            <div class="message-header">
+                <span class="message-role">${role.toUpperCase()}</span>
+                <span class="message-ts">${ts}</span>
+            </div>
+            <div class="message-content">${escapeHtml(content)}</div>
+        `;
+        messagesEl.appendChild(div);
+        scrollToBottom();
+    }
+
+    const stepConfig = {
+        iteration:   { icon: '🔄', label: 'Iteration',   cls: 'step-iteration' },
+        thought:     { icon: '💭', label: 'Thought',      cls: 'step-thought' },
+        tool_call:   { icon: '🔧', label: 'Tool Call',    cls: 'step-tool-call' },
+        tool_result: { icon: '✅', label: 'Tool Result',  cls: 'step-tool-result' },
+        model:       { icon: '🤖', label: 'Model',        cls: 'step-model' },
+        answer:      { icon: '💬', label: 'Answer',       cls: 'step-answer' },
+        error:       { icon: '❌', label: 'Error',        cls: 'step-error' },
+    };
+
+    function appendStep(stepType, content, agent) {
+        // Dedup consecutive identical steps
+        const skey = `${stepType}::${agent}::${content}`;
+        if (skey === _lastStepKey) return;
+        _lastStepKey = skey;
+
+        activityEmpty.style.display = 'none';
+        const cfg = stepConfig[stepType] || { icon: '•', label: stepType, cls: 'step-default' };
+        const div = document.createElement('div');
+        div.className = `step-entry ${cfg.cls}`;
+        const display = content.length > 400 ? content.substring(0, 400) + '…' : content;
+        const agentTag = agent ? `<span class="step-agent">${agent}</span>` : '';
+        div.innerHTML = `
+            <div class="step-header">
+                <span class="step-icon">${cfg.icon}</span>
+                <span class="step-label">${cfg.label}</span>
+                ${agentTag}
+                <span class="step-time">${new Date().toLocaleTimeString()}</span>
+            </div>
+            <div class="step-content">${escapeHtml(display)}</div>
+        `;
+        activityBody.appendChild(div);
+        activityBody.scrollTop = activityBody.scrollHeight;
+    }
+
+    function clearSteps() {
+        activityBody.innerHTML = '';
+        activityBody.appendChild(activityEmpty);
+        activityEmpty.style.display = 'flex';
+        _lastStepKey = '';
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function sendMessage(e) {
+        e.preventDefault();
+        if (inFlight) return;
+        const text = inputEl.value.trim();
+        if (!text) return;
+        const now = Date.now();
+        if (text === _lastSentText && (now - _lastSentAt) < 2000) return;
+
+        const requestId = nextRequestId();
+        appendMessage('user', text);
+        clearSteps();
+        appendStep('iteration', `Query: ${text}`);
+
+        sendWS('chat', { content: text, request_id: requestId });
+        inputEl.value = '';
+        sendBtn.disabled = true;
+        inFlight = true;
+        _lastSentText = text;
+        _lastSentAt = now;
+    }
+
+    function clearChat() {
+        sendWS('clear');
+        messagesEl.innerHTML = '';
+        clearSteps();
+        _lastMsgKey = '';
+        inFlight = false;
+        sendBtn.disabled = false;
+        _lastSentText = '';
+        _lastSentAt = 0;
+    }
+
+    // Override base template handler
+    handleWSMessage = function(msg) {
+        switch (msg.type) {
+            case 'chat_response':
+                appendMessage('assistant', msg.data.content);
+                statusEl.style.display = 'none';
+                sendBtn.disabled = false;
+                inFlight = false;
+                break;
+
+            case 'step':
+                appendStep(msg.data.step_type, msg.data.content, msg.data.agent);
+                break;
+
+            case 'status':
+                if (msg.data.status === 'thinking') {
+                    statusEl.style.display = 'flex';
+                    statusText.textContent = 'Thinking...';
+                    sendBtn.disabled = true;
+                    inFlight = true;
+                } else if (msg.data.status === 'done' || msg.data.status === 'cleared') {
+                    statusEl.style.display = 'none';
+                    sendBtn.disabled = false;
+                    inFlight = false;
+                }
+                break;
+
+            case 'error':
+                appendMessage('assistant', `⚠️ ${msg.data.content}`);
+                appendStep('error', msg.data.content, msg.data.agent);
+                statusEl.style.display = 'none';
+                sendBtn.disabled = false;
+                inFlight = false;
+                break;
+
+            case 'theme_change':
+                document.documentElement.setAttribute('data-theme', msg.data.theme);
+                break;
+
+            case 'state_sync':
+                // Full re-render from server state (reconnect scenario)
+                if (msg.data.messages) {
+                    messagesEl.innerHTML = '';
+                    _lastMsgKey = '';
+                    msg.data.messages.forEach(m => appendMessage(m.role, m.content));
+                }
+                // Recover from potential stale disabled state after reconnect.
+                sendBtn.disabled = false;
+                inFlight = false;
+                break;
+        }
+    };
+
+    scrollToBottom();
+</script>
+{% endblock %}

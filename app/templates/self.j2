@@ -1,0 +1,609 @@
+{% extends "base.j2" %}
+{% set active_page = "self" %}
+
+{% block title %}Habits — LocalAgents{% endblock %}
+
+{% block content %}
+<div class="self-dashboard">
+
+    <!-- ── Sidebar: Calendar Heatmap + Streak ────────────────── -->
+    <div class="self-sidebar">
+
+        <!-- Streak Card -->
+        <div class="self-card self-streak-card">
+            <div class="self-streak-display">
+                <div class="self-streak-flame" id="streakFlame">🔥</div>
+                <div class="self-streak-count" id="streakCount">0</div>
+                <div class="self-streak-label">Day Streak</div>
+            </div>
+            <div class="self-streak-bar">
+                <div class="self-streak-progress" id="streakProgress" style="width:0%"></div>
+            </div>
+            <div class="self-streak-sub" id="streakSub">Complete today's habits to keep your streak!</div>
+        </div>
+
+        <!-- Calendar Heatmap -->
+        <div class="self-card self-calendar-card">
+            <div class="self-card-head">
+                <span class="self-card-title" id="calMonthLabel">February 2026</span>
+                <div style="display:flex;gap:0.2rem;">
+                    <button class="btn btn-ghost btn-sm" onclick="calNav(-1)" title="Previous">‹</button>
+                    <button class="btn btn-ghost btn-sm" onclick="calNav(1)" title="Next">›</button>
+                </div>
+            </div>
+            <div class="self-cal-grid" id="calGrid"></div>
+            <div class="self-intensity-legend" style="padding:0 0.75rem 0.6rem; justify-content:flex-end;">
+                <span class="self-legend-label">Less</span>
+                <span class="self-legend-chip lvl-0"></span>
+                <span class="self-legend-chip lvl-1"></span>
+                <span class="self-legend-chip lvl-2"></span>
+                <span class="self-legend-chip lvl-3"></span>
+                <span class="self-legend-chip lvl-4"></span>
+                <span class="self-legend-label">More</span>
+            </div>
+        </div>
+
+        <!-- Stats Card -->
+        <div class="self-card self-stats-card">
+            <div class="self-card-head">
+                <span class="self-card-title">Stats</span>
+            </div>
+            <div class="self-stats-grid">
+                <div class="self-stat">
+                    <div class="self-stat-value" id="statTotal">0</div>
+                    <div class="self-stat-label">Total Check-ins</div>
+                </div>
+                <div class="self-stat">
+                    <div class="self-stat-value" id="statBest">0</div>
+                    <div class="self-stat-label">Best Streak</div>
+                </div>
+                <div class="self-stat">
+                    <div class="self-stat-value" id="statRate">0%</div>
+                    <div class="self-stat-label">This Week</div>
+                </div>
+                <div class="self-stat">
+                    <div class="self-stat-value" id="statHabits">0</div>
+                    <div class="self-stat-label">Active Habits</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Main: Today's Habits ──────────────────────────────── -->
+    <div class="self-main">
+
+        <!-- Header -->
+        <div class="self-main-head">
+            <div class="self-greeting">
+                <h2 id="greetingText">Good afternoon, Sir</h2>
+                <span class="self-date" id="dateText"></span>
+            </div>
+            <div class="self-today-progress">
+                <svg class="self-ring" viewBox="0 0 36 36">
+                    <path class="self-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+                    <path class="self-ring-fill" id="ringFill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+                    <text x="18" y="20.5" class="self-ring-text" id="ringText">0%</text>
+                </svg>
+            </div>
+        </div>
+
+        <!-- Habits List -->
+        <div class="self-card self-habits-main">
+            <div class="self-card-head">
+                <span class="self-card-title">Today's Habits</span>
+                <button class="btn btn-ghost btn-sm" onclick="toggleAddHabit()" title="Add habit" id="addHabitBtn">＋</button>
+            </div>
+
+            <!-- Add habit form (hidden by default) -->
+            <div class="self-habit-add hidden" id="habitAddForm">
+                <input type="text" class="self-input" id="newHabitInput" placeholder="New habit name…" onkeydown="if(event.key==='Enter')addHabit()">
+                <button class="btn btn-ghost btn-sm" onclick="addHabit()">Add</button>
+            </div>
+
+            <!-- Habit items scroll -->
+            <div class="self-habits-scroll" id="habitsScroll">
+                <div class="self-placeholder" id="habitsEmpty">
+                    <span>Add your first habit to start tracking! 🎯</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Week Overview -->
+        <div class="self-card self-week-card">
+            <div class="self-card-head">
+                <span class="self-card-title">This Week</span>
+            </div>
+            <div class="self-week-grid" id="weekGrid"></div>
+        </div>
+
+        <!-- Voice Input Bar -->
+        <div class="self-voice-bar" id="voiceBar">
+            <button class="self-voice-mic" id="selfMicBtn" onclick="toggleSelfMic()" title="Toggle voice input">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1.2rem;height:1.2rem;">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                    <line x1="12" y1="19" x2="12" y2="23"/>
+                    <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+            </button>
+            <div class="self-voice-status">
+                <span class="self-voice-state-dot" id="selfStateDot"></span>
+                <span class="self-voice-state-text" id="selfStateText">Say "Jarvis" to start</span>
+            </div>
+            <div class="self-voice-live" id="selfLiveText"></div>
+        </div>
+
+        <!-- Last agent response banner -->
+        <div class="self-agent-response hidden" id="selfAgentResponse"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // ── Server-injected initial state (SSR) ──────────────────────
+    let selfState = {{ state.self | tojson }};
+    let habits   = selfState.habits   || [];
+    let checks   = selfState.checkins || {};
+
+    const today    = new Date();
+    const todayKey = dateKey(today);
+    let calYear    = today.getFullYear();
+    let calMonth   = today.getMonth();
+
+    function dateKey(d) {
+        const dd = d instanceof Date ? d : new Date(d);
+        return `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,'0')}-${String(dd.getDate()).padStart(2,'0')}`;
+    }
+
+    // ── Greeting ─────────────────────────────────────────────────
+    (function setGreeting() {
+        const h = today.getHours();
+        const g = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+        document.getElementById('greetingText').textContent = `${g}, Sir`;
+        document.getElementById('dateText').textContent = today.toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+        });
+    })();
+
+    // ── Sync from server ─────────────────────────────────────────
+    function applyServerState(s) {
+        habits = s.habits   || [];
+        checks = s.checkins || {};
+        renderAll();
+    }
+
+    async function fetchSelfState() {
+        try {
+            const res = await fetch('/api/self/state');
+            if (res.ok) applyServerState(await res.json());
+        } catch(e) { console.error('fetchSelfState error:', e); }
+    }
+
+    // ── Add / Remove via REST ────────────────────────────────────
+    function toggleAddHabit() {
+        const form = document.getElementById('habitAddForm');
+        form.classList.toggle('hidden');
+        if (!form.classList.contains('hidden')) document.getElementById('newHabitInput').focus();
+    }
+
+    async function addHabit() {
+        const input = document.getElementById('newHabitInput');
+        const name  = input.value.trim();
+        if (!name) return;
+        input.value = '';
+        document.getElementById('habitAddForm').classList.add('hidden');
+        const res = await fetch('/api/self/habits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+        });
+        if (res.ok) await fetchSelfState();
+    }
+
+    async function removeHabit(id) {
+        const res = await fetch(`/api/self/habits/${id}`, { method: 'DELETE' });
+        if (res.ok) await fetchSelfState();
+    }
+
+    async function toggleCheck(habitId, dk) {
+        const done = !(checks[dk] && checks[dk][habitId]);
+        const res = await fetch(`/api/self/habits/${habitId}/check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ done, date: dk }),
+        });
+        if (res.ok) await fetchSelfState();
+    }
+
+    // ── Streak Logic ─────────────────────────────────────────────
+    function dayCompletion(dk) {
+        if (habits.length === 0) return 0;
+        const dayChecks = checks[dk] || {};
+        let done = 0;
+        habits.forEach(h => { if (dayChecks[h.id]) done++; });
+        return done / habits.length;
+    }
+
+    function computeStreak() {
+        if (habits.length === 0) return { current: 0, best: 0 };
+        let streak = 0;
+        const d = new Date(today);
+        if (dayCompletion(dateKey(d)) >= 1.0) {
+            streak = 1;
+            d.setDate(d.getDate() - 1);
+        } else {
+            d.setDate(d.getDate() - 1);
+        }
+        while (true) {
+            const dk = dateKey(d);
+            if (dayCompletion(dk) >= 1.0) { streak++; d.setDate(d.getDate() - 1); }
+            else break;
+        }
+        // Best streak: scan all check dates
+        let best = streak;
+        // Simple scan: not O(n) optimal but sufficient for reasonable data
+        const allDates = Array.from(new Set([
+            ...Object.keys(checks),
+        ])).sort();
+        let runLen = 0;
+        let prevD = null;
+        for (const dk of allDates) {
+            if (dayCompletion(dk) >= 1.0) {
+                const cur = new Date(dk);
+                if (prevD) {
+                    const diff = Math.round((cur - prevD) / 86400000);
+                    runLen = diff === 1 ? runLen + 1 : 1;
+                } else {
+                    runLen = 1;
+                }
+                if (runLen > best) best = runLen;
+                prevD = cur;
+            } else {
+                prevD = null; runLen = 0;
+            }
+        }
+        return { current: streak, best };
+    }
+
+    // ── Render ───────────────────────────────────────────────────
+    function renderHabits() {
+        const scroll = document.getElementById('habitsScroll');
+        const empty  = document.getElementById('habitsEmpty');
+        scroll.querySelectorAll('.self-habit-item').forEach(el => el.remove());
+        if (habits.length === 0) { empty.style.display = 'flex'; return; }
+        empty.style.display = 'none';
+        const dayChecks = checks[todayKey] || {};
+        habits.forEach(h => {
+            const done = !!dayChecks[h.id];
+            const div  = document.createElement('div');
+            div.className = `self-habit-item ${done ? 'is-done' : ''}`;
+            div.innerHTML = `
+                <button class="self-habit-check ${done ? 'checked' : ''}" onclick="toggleCheck('${h.id}','${todayKey}')">
+                    ${done ? '✓' : ''}
+                </button>
+                <span class="self-habit-name">${escapeHtml(h.name)}</span>
+                <button class="self-habit-remove" onclick="removeHabit('${h.id}')" title="Remove">×</button>
+            `;
+            scroll.appendChild(div);
+        });
+    }
+
+    function renderProgress() {
+        const completion = dayCompletion(todayKey);
+        const pct = Math.round(completion * 100);
+        document.getElementById('ringFill').setAttribute('stroke-dasharray', `${pct}, 100`);
+        document.getElementById('ringText').textContent = `${pct}%`;
+        const ring = document.getElementById('ringFill');
+        if (pct >= 100) ring.style.stroke = '#22c55e';
+        else if (pct >= 50) ring.style.stroke = '#f59e0b';
+        else ring.style.stroke = 'var(--accent)';
+    }
+
+    function renderStreak() {
+        const { current, best } = computeStreak();
+        document.getElementById('streakCount').textContent = current;
+        const flame = document.getElementById('streakFlame');
+        flame.style.fontSize   = current > 0 ? '2.4rem' : '1.8rem';
+        flame.style.opacity    = current > 0 ? '1' : '0.3';
+        const todayPct = Math.round(dayCompletion(todayKey) * 100);
+        document.getElementById('streakProgress').style.width = `${todayPct}%`;
+        const sub = document.getElementById('streakSub');
+        if (todayPct >= 100)
+            sub.textContent = `All done! ${current > 1 ? current + ' days and counting!' : 'Great start!'}`;
+        else if (current > 0)
+            sub.textContent = `${todayPct}% done today — keep the streak alive!`;
+        else
+            sub.textContent = 'Complete all habits today to start a streak!';
+    }
+
+    function renderStats() {
+        let total = 0;
+        Object.values(checks).forEach(day => { Object.values(day).forEach(v => { if (v) total++; }); });
+        document.getElementById('statTotal').textContent = total;
+        const { best } = computeStreak();
+        document.getElementById('statBest').textContent = best;
+        document.getElementById('statHabits').textContent = habits.length;
+        let weekDone = 0, weekTotal = 0;
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(today); d.setDate(d.getDate() - d.getDay() + i);
+            const dk = dateKey(d); const dayC = checks[dk] || {};
+            habits.forEach(h => { weekTotal++; if (dayC[h.id]) weekDone++; });
+        }
+        const rate = weekTotal > 0 ? Math.round((weekDone / weekTotal) * 100) : 0;
+        document.getElementById('statRate').textContent = `${rate}%`;
+    }
+
+    function renderCalendar() {
+        const grid       = document.getElementById('calGrid');
+        const monthLabel = document.getElementById('calMonthLabel');
+        grid.innerHTML   = '';
+        const monthDate  = new Date(calYear, calMonth, 1);
+        monthLabel.textContent = monthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach(d => {
+            const span = document.createElement('span');
+            span.className = 'self-cal-day-name'; span.textContent = d;
+            grid.appendChild(span);
+        });
+        const firstDay     = new Date(calYear, calMonth, 1).getDay();
+        const daysInMonth  = new Date(calYear, calMonth + 1, 0).getDate();
+        for (let i = 0; i < firstDay; i++) {
+            const e = document.createElement('span'); e.className = 'self-cal-cell empty'; grid.appendChild(e);
+        }
+        for (let d = 1; d <= daysInMonth; d++) {
+            const cellDate = new Date(calYear, calMonth, d);
+            const dk       = dateKey(cellDate);
+            const comp     = dayCompletion(dk);
+            const lvl      = comp >= 1.0 ? 4 : comp >= 0.75 ? 3 : comp >= 0.5 ? 2 : comp > 0 ? 1 : 0;
+            const cell     = document.createElement('span');
+            cell.className = `self-cal-cell lvl-${lvl}`;
+            if (dk === todayKey) cell.classList.add('today');
+            cell.textContent = d;
+            cell.title       = `${dk}: ${Math.round(comp * 100)}% complete`;
+            grid.appendChild(cell);
+        }
+    }
+
+    function calNav(dir) {
+        calMonth += dir;
+        if (calMonth > 11) { calMonth = 0; calYear++; }
+        if (calMonth < 0)  { calMonth = 11; calYear--; }
+        renderCalendar();
+    }
+
+    function renderWeek() {
+        const grid        = document.getElementById('weekGrid');
+        grid.innerHTML    = '';
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - today.getDay());
+        for (let i = 0; i < 7; i++) {
+            const d  = new Date(startOfWeek); d.setDate(startOfWeek.getDate() + i);
+            const dk = dateKey(d);
+            const completion = dayCompletion(dk);
+            const pct        = Math.round(completion * 100);
+            const isToday    = dk === todayKey;
+            const col        = document.createElement('div');
+            col.className    = `self-week-day ${isToday ? 'is-today' : ''} ${pct >= 100 ? 'is-complete' : ''}`;
+            col.innerHTML = `
+                <div class="self-week-day-name">${d.toLocaleDateString('en-US',{weekday:'short'})}</div>
+                <div class="self-week-day-num">${d.getDate()}</div>
+                <svg class="self-week-ring" viewBox="0 0 36 36">
+                    <path class="self-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+                    <path class="self-ring-fill ${pct >= 100 ? 'complete' : ''}" stroke-dasharray="${pct}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+                    <text x="18" y="20.5" class="self-ring-text">${pct}%</text>
+                </svg>
+                <div class="self-week-checklist">
+                    ${habits.map(h => {
+                        const checked = (checks[dk]||{})[h.id];
+                        return `<span class="self-week-check ${checked?'done':''}" title="${escapeHtml(h.name)}">${checked?'✓':'○'}</span>`;
+                    }).join('')}
+                </div>
+            `;
+            grid.appendChild(col);
+        }
+    }
+
+    function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.appendChild(document.createTextNode(text));
+        return d.innerHTML;
+    }
+
+    function renderAll() {
+        renderHabits(); renderProgress(); renderStreak();
+        renderStats();  renderCalendar(); renderWeek();
+    }
+
+    // ── Voice Input ──────────────────────────────────────────────
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let selfRecognition    = null;
+    let selfListening      = false;
+    let selfWakeDetected   = false;
+    let selfWakeBanner     = false;
+    let selfWakeIdx        = -1;
+    let selfCmdBuffer      = '';
+    let selfPauseTimer     = null;
+    let selfIsSpeaking     = false;
+    let selfPending        = false;
+    let selfLastCmd        = '';
+    let selfLastCmdAt      = 0;
+    const SELF_WAKE_WORD   = 'jarvis';
+    const SELF_PAUSE_MS    = 1500;
+
+    function nextSelfReqId() {
+        return window.crypto?.randomUUID?.() || `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
+
+    function setSelfState(state) {
+        const dot  = document.getElementById('selfStateDot');
+        const text = document.getElementById('selfStateText');
+        const btn  = document.getElementById('selfMicBtn');
+        const bar  = document.getElementById('voiceBar');
+        bar.className = `self-voice-bar self-voice-${state}`;
+        btn.classList.toggle('active', state !== 'idle');
+        switch (state) {
+            case 'idle':       text.textContent = `Say "${SELF_WAKE_WORD}" to start`; break;
+            case 'listening':  text.textContent = `Listening… say "${SELF_WAKE_WORD}"`; break;
+            case 'wake':       text.textContent = 'Speak your command…'; break;
+            case 'processing': text.textContent = 'Thinking…'; break;
+            case 'speaking':   text.textContent = 'Speaking…'; break;
+        }
+    }
+
+    function setSelfLive(t) { document.getElementById('selfLiveText').textContent = t || ''; }
+
+    function toggleSelfMic() { selfListening ? stopSelfMic() : startSelfMic(); }
+
+    function startSelfMic() {
+        if (!SpeechRecognition) { showSelfResponse('Speech recognition not supported. Use Chrome.'); return; }
+        selfRecognition = new SpeechRecognition();
+        selfRecognition.continuous     = true;
+        selfRecognition.interimResults = true;
+        selfRecognition.lang           = 'en-US';
+        selfRecognition.onresult = handleSelfSpeech;
+        selfRecognition.onerror  = () => stopSelfMic();
+        selfRecognition.onend    = () => { if (selfListening && !selfIsSpeaking) selfRecognition.start(); };
+        selfRecognition.start();
+        selfListening = true; selfWakeDetected = false; selfWakeBanner = false;
+        selfWakeIdx = -1; selfCmdBuffer = '';
+        setSelfState('listening');
+    }
+
+    function stopSelfMic() {
+        if (selfRecognition) { try { selfRecognition.stop(); } catch(_){} selfRecognition = null; }
+        selfListening = false; selfWakeDetected = false; selfWakeBanner = false;
+        selfWakeIdx = -1; selfCmdBuffer = '';
+        clearTimeout(selfPauseTimer);
+        setSelfState('idle'); setSelfLive('');
+    }
+
+    function pauseSelfMic() { if (selfRecognition) { try { selfRecognition.stop(); } catch(_){} } }
+
+    function resumeSelfMic() {
+        if (!selfListening || !SpeechRecognition) return;
+        try {
+            selfRecognition = new SpeechRecognition();
+            selfRecognition.continuous = true; selfRecognition.interimResults = true; selfRecognition.lang = 'en-US';
+            selfRecognition.onresult = handleSelfSpeech;
+            selfRecognition.onerror  = () => stopSelfMic();
+            selfRecognition.onend    = () => { if (selfListening && !selfIsSpeaking) selfRecognition.start(); };
+            selfRecognition.start();
+            selfWakeDetected = false; selfWakeBanner = false; selfWakeIdx = -1; selfCmdBuffer = '';
+        } catch(e) { console.error('Resume selfMic failed:', e); }
+    }
+
+    function handleSelfSpeech(event) {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const res = event.results[i];
+            const t   = res[0].transcript;
+            if (!selfWakeDetected) {
+                const lower = t.toLowerCase();
+                if (lower.includes(SELF_WAKE_WORD)) {
+                    selfWakeDetected = true; selfWakeIdx = i;
+                    if (!selfWakeBanner) { selfWakeBanner = true; setSelfState('wake'); }
+                    resetSelfPause();
+                    const idx = lower.indexOf(SELF_WAKE_WORD);
+                    selfCmdBuffer = t.substring(idx + SELF_WAKE_WORD.length).trim();
+                }
+            }
+            if (selfWakeDetected) {
+                if (i === selfWakeIdx) {
+                    const lower = t.toLowerCase();
+                    const idx   = lower.indexOf(SELF_WAKE_WORD);
+                    if (idx !== -1) selfCmdBuffer = t.substring(idx + SELF_WAKE_WORD.length).trim();
+                } else if (i > selfWakeIdx && res.isFinal) {
+                    selfCmdBuffer += ' ' + t; selfCmdBuffer = selfCmdBuffer.trim();
+                }
+                resetSelfPause();
+            }
+            if (!res.isFinal) interim += t;
+        }
+        setSelfLive(interim || selfCmdBuffer || '');
+    }
+
+    function resetSelfPause() {
+        clearTimeout(selfPauseTimer);
+        selfPauseTimer = setTimeout(() => {
+            if (selfWakeDetected && selfCmdBuffer.trim()) submitSelfCommand(selfCmdBuffer.trim());
+            else if (selfWakeDetected) { selfWakeDetected = false; selfWakeIdx = -1; setSelfState('listening'); }
+        }, SELF_PAUSE_MS);
+    }
+
+    function submitSelfCommand(text) {
+        if (selfPending) return;
+        const now = Date.now();
+        if (text === selfLastCmd && (now - selfLastCmdAt) < 2000) return;
+        selfWakeDetected = false; selfWakeBanner = false; selfWakeIdx = -1; selfCmdBuffer = '';
+        clearTimeout(selfPauseTimer);
+        setSelfState('processing'); setSelfLive(text);
+        sendWS('chat', { content: text, source: 'self_voice', request_id: nextSelfReqId() });
+        selfPending = true; selfLastCmd = text; selfLastCmdAt = now;
+    }
+
+    // ── TTS playback for self page ───────────────────────────────
+    async function selfSpeak(text) {
+        if (!text || !text.trim()) return;
+        const wasListening = selfListening;
+        pauseSelfMic();
+        selfIsSpeaking = true; setSelfState('speaking');
+        try {
+            const res = await fetch('/api/speak', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text }),
+            });
+            if (res.ok) {
+                const ct = res.headers.get('content-type') || '';
+                if (ct.startsWith('audio/')) {
+                    const blob = await res.blob();
+                    const url  = URL.createObjectURL(blob);
+                    await new Promise(resolve => {
+                        const audio = new Audio(url);
+                        audio.onended = resolve; audio.onerror = resolve;
+                        audio.play().catch(resolve);
+                    });
+                    URL.revokeObjectURL(url);
+                }
+            }
+        } catch(e) { console.error('selfSpeak error:', e); }
+        finally {
+            selfIsSpeaking = false;
+            if (wasListening) { resumeSelfMic(); setSelfState('listening'); }
+            else setSelfState('idle');
+        }
+    }
+
+    function showSelfResponse(text) {
+        const el = document.getElementById('selfAgentResponse');
+        el.textContent = text;
+        el.classList.remove('hidden');
+        setTimeout(() => el.classList.add('hidden'), 6000);
+    }
+
+    // ── WebSocket handling  ──────────────────────────────────────
+    handleWSMessage = function(msg) {
+        switch (msg.type) {
+            case 'self_state_update':
+                if (msg.data) applyServerState(msg.data);
+                break;
+            case 'chat_response':
+                showSelfResponse(msg.data.content);
+                selfSpeak(msg.data.content);
+                selfPending = false;
+                break;
+            case 'status':
+                if (msg.data.status === 'thinking' && selfPending) setSelfState('processing');
+                else if (msg.data.status === 'done' && !selfIsSpeaking && !selfPending)
+                    setSelfState(selfListening ? 'listening' : 'idle');
+                if (msg.data.status === 'done' || msg.data.status === 'cleared') selfPending = false;
+                break;
+            case 'theme_change':
+                document.documentElement.setAttribute('data-theme', msg.data.theme);
+                break;
+        }
+    };
+
+    renderAll();
+</script>
+{% endblock %}

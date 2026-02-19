@@ -1,0 +1,641 @@
+{% extends "base.j2" %}
+{% set active_page = "sts" %}
+
+{% block title %}Speech — LocalAgents{% endblock %}
+
+{% block content %}
+<div class="sts-page">
+
+    <!-- ── Main content area ───────────────────────────────────────── -->
+    <div class="sts-main">
+
+        <!-- Top bar: model selectors + state -->
+        <div class="sts-toolbar">
+            <div class="sts-selectors">
+                <div class="sts-select-group">
+                    <label class="sts-select-label">🎙 Transcription</label>
+                    <select class="sts-select" id="sttSelect" onchange="switchBackend('stt', this.value)">
+                        {% for b in stt_backends %}
+                        <option value="{{ b.id }}"{% if b.id == state.active_stt_backend %} selected{% endif %}>{{ b.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="sts-select-group">
+                    <label class="sts-select-label">🔊 Voice</label>
+                    <select class="sts-select" id="ttsSelect" onchange="switchBackend('tts', this.value)">
+                        {% for b in tts_backends %}
+                        <option value="{{ b.id }}"{% if b.id == state.active_tts_backend %} selected{% endif %}>{{ b.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="sts-select-group">
+                    <label class="sts-select-label">🗣 Wake Word</label>
+                    <input type="text" class="sts-select" id="wakeWordInput" value="Jarvis" spellcheck="false" style="width:140px">
+                </div>
+            </div>
+            <div class="sts-state-pill" id="statePill">
+                <span class="sts-state-dot" id="stateDot"></span>
+                <span id="stateText">Idle</span>
+            </div>
+        </div>
+
+        <!-- Visualizer -->
+        <div class="sts-center">
+            <div class="sts-viz-wrap" id="vizWrap">
+                <canvas id="vizCanvas" width="280" height="280"></canvas>
+                <!-- Viz mode pill overlay -->
+                <div class="sts-viz-pill">
+                    <button class="sts-viz-btn active" data-mode="siri" onclick="setVizMode('siri')" title="Siri Wave">〰️</button>
+                    <button class="sts-viz-btn" data-mode="bars" onclick="setVizMode('bars')" title="Equalizer">📊</button>
+                    <button class="sts-viz-btn" data-mode="wave" onclick="setVizMode('wave')" title="Waveform">📈</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live bar -->
+        <div class="sts-live-bar">
+            <div class="sts-live-indicator">
+                <span class="sts-live-dot"></span>
+                <span class="sts-live-label">LIVE</span>
+            </div>
+            <div class="sts-live-text" id="liveText">Microphone off</div>
+        </div>
+
+        <!-- Transcript -->
+        <div class="sts-transcript" id="transcriptPanel">
+            <div class="sts-transcript-empty" id="transcriptEmpty">
+                <span style="font-size:2rem; opacity:0.3">🎙️</span>
+                <span>Say <strong id="wakeWordDisplay">"Jarvis"</strong> to begin, or tap the mic</span>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="sts-controls">
+            <button class="sts-mic-btn" id="micBtn" onclick="toggleMic()" title="Toggle microphone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mic-icon">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                    <line x1="12" y1="19" x2="12" y2="23"/>
+                    <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+            </button>
+            <button class="sts-ctrl-btn" id="interruptBtn" onclick="interruptSpeaking()" title="Stop speaking" style="display:none;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="15" y1="9" x2="9" y2="15"/>
+                    <line x1="9" y1="9" x2="15" y2="15"/>
+                </svg>
+            </button>
+            <button class="sts-ctrl-btn" onclick="clearTranscript()" title="Clear conversation">✕</button>
+        </div>
+    </div>
+
+    <!-- ── Activity side panel ─────────────────────────────────────── -->
+    <aside class="sts-activity" id="activityPanel">
+        <div class="activity-header">
+            <span class="activity-title">⚡ Activity</span>
+            <button class="btn btn-ghost btn-sm" onclick="clearSteps()" title="Clear">🗑️</button>
+        </div>
+        <div class="activity-body" id="activityBody">
+            <div class="sts-current-action" id="currentAction">
+                <div class="current-action-label">Current Step</div>
+                <div class="current-action-text" id="currentActionText">Waiting…</div>
+            </div>
+            <div class="activity-divider"></div>
+            <div class="activity-empty" id="activityEmpty">
+                <span style="opacity:0.3">📋</span>
+                <span>Steps will appear here</span>
+            </div>
+        </div>
+    </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // ── DOM refs ──────────────────────────────────────────────────────
+    const micBtn          = document.getElementById('micBtn');
+    const vizCanvas       = document.getElementById('vizCanvas');
+    const vizWrap         = document.getElementById('vizWrap');
+    const statePill       = document.getElementById('statePill');
+    const stateText       = document.getElementById('stateText');
+    const liveText        = document.getElementById('liveText');
+    const transcriptPanel = document.getElementById('transcriptPanel');
+    const transcriptEmpty = document.getElementById('transcriptEmpty');
+    const activityBody    = document.getElementById('activityBody');
+    const activityEmpty   = document.getElementById('activityEmpty');
+    const currentActionText = document.getElementById('currentActionText');
+    const wakeWordInput   = document.getElementById('wakeWordInput');
+    const wakeWordDisp    = document.getElementById('wakeWordDisplay');
+    const interruptBtn    = document.getElementById('interruptBtn');
+
+    // ── State ─────────────────────────────────────────────────────────
+    let isListening   = false;
+    let isSpeaking    = false;      // true while server TTS or browser TTS active
+    let recognition   = null;
+    let wakeWord      = 'jarvis';
+    let wakeDetected  = false;
+    let wakeBannerShown = false;
+    let commandBuffer = '';
+    let pauseTimer    = null;
+    const PAUSE_MS    = 1500;
+    let currentState  = 'idle';
+    let wakeResultIndex = -1;
+    let _lastTurnKey  = '';         // dedup guard
+    let pendingVoiceRequest = false;
+    let lastVoiceCommand = '';
+    let lastVoiceCommandAt = 0;
+
+    function nextRequestId() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID();
+        }
+        return `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    // ── Audio Visualizer ──────────────────────────────────────────────
+    let audioCtx  = null;
+    let analyser  = null;
+    let micStream = null;
+    let vizMode   = localStorage.getItem('sts_viz_mode') || 'siri';
+    let vizRAF    = null;
+    const vizCtx  = vizCanvas.getContext('2d');
+    const W       = vizCanvas.width;
+    const H       = vizCanvas.height;
+    let siriPhase = 0;
+
+    document.querySelectorAll('.sts-viz-pill .sts-viz-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.mode === vizMode));
+
+    function setVizMode(mode) {
+        vizMode = mode;
+        localStorage.setItem('sts_viz_mode', mode);
+        document.querySelectorAll('.sts-viz-pill .sts-viz-btn').forEach(b =>
+            b.classList.toggle('active', b.dataset.mode === mode));
+    }
+
+    async function initAudio() {
+        if (audioCtx) return;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioCtx.createMediaStreamSource(micStream).connect(analyser);
+            drawViz();
+        } catch (e) { console.error('Audio init error:', e); }
+    }
+
+    function stopAudio() {
+        if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+        if (audioCtx)  { audioCtx.close(); audioCtx = null; analyser = null; }
+        if (vizRAF)    { cancelAnimationFrame(vizRAF); vizRAF = null; }
+        vizCtx.clearRect(0, 0, W, H);
+    }
+
+    function stateColor() {
+        const cs = getComputedStyle(document.documentElement);
+        switch (currentState) {
+            case 'listening':  return cs.getPropertyValue('--accent').trim()  || '#6366f1';
+            case 'wake':       return cs.getPropertyValue('--success').trim() || '#22c55e';
+            case 'processing': return cs.getPropertyValue('--warning').trim() || '#f59e0b';
+            case 'speaking':   return '#a78bfa';
+            default:           return cs.getPropertyValue('--text-muted').trim() || '#666';
+        }
+    }
+
+    function drawViz() {
+        vizRAF = requestAnimationFrame(drawViz);
+        const color = stateColor();
+        const bufLen = analyser ? analyser.frequencyBinCount : 64;
+        const dataArr = new Uint8Array(bufLen);
+        if (analyser) analyser.getByteFrequencyData(dataArr);
+        vizCtx.clearRect(0, 0, W, H);
+        if (vizMode === 'siri')      drawSiri(dataArr, color);
+        else if (vizMode === 'bars') drawBars(dataArr, color);
+        else                         drawWave(color);
+    }
+
+    function drawSiri(data, color) {
+        const avg = data.reduce((s, v) => s + v, 0) / (data.length || 1);
+        const amplitude = (avg / 255) * (H * 0.35) + 4;
+        siriPhase += 0.04;
+        for (let wave = 0; wave < 3; wave++) {
+            vizCtx.beginPath();
+            vizCtx.globalAlpha = 1 - wave * 0.25;
+            const freq = 0.02 + wave * 0.005;
+            const phaseOff = wave * 0.6;
+            for (let x = 0; x <= W; x++) {
+                const y = H / 2 + Math.sin(x * freq + siriPhase + phaseOff)
+                    * amplitude * (1 - wave * 0.2) * Math.sin((x / W) * Math.PI);
+                x === 0 ? vizCtx.moveTo(x, y) : vizCtx.lineTo(x, y);
+            }
+            vizCtx.strokeStyle = color;
+            vizCtx.lineWidth = 2.5 - wave * 0.5;
+            vizCtx.stroke();
+        }
+        vizCtx.globalAlpha = 1;
+    }
+
+    function drawBars(data, color) {
+        const barCount = 32;
+        const barW = (W / barCount) * 0.7;
+        const gap  = (W / barCount) * 0.3;
+        const step = Math.floor(data.length / barCount);
+        for (let i = 0; i < barCount; i++) {
+            const val = data[i * step] / 255;
+            const barH = val * H * 0.8 + 2;
+            const x = i * (barW + gap) + gap / 2;
+            const centerY = H / 2;
+            const halfH = barH / 2;
+            vizCtx.fillStyle = color;
+            vizCtx.globalAlpha = 0.6 + val * 0.4;
+            vizCtx.beginPath();
+            vizCtx.roundRect(x, centerY - halfH, barW, halfH * 2, 2);
+            vizCtx.fill();
+        }
+        vizCtx.globalAlpha = 1;
+    }
+
+    function drawWave(color) {
+        if (!analyser) return;
+        const bufLen = analyser.fftSize;
+        const timeData = new Uint8Array(bufLen);
+        analyser.getByteTimeDomainData(timeData);
+        vizCtx.beginPath();
+        vizCtx.strokeStyle = color;
+        vizCtx.lineWidth = 2;
+        const sliceW = W / bufLen;
+        for (let i = 0; i < bufLen; i++) {
+            const y = (timeData[i] / 128.0) * H / 2;
+            i === 0 ? vizCtx.moveTo(0, y) : vizCtx.lineTo(i * sliceW, y);
+        }
+        vizCtx.lineTo(W, H / 2);
+        vizCtx.stroke();
+    }
+
+    // ── Wake word ─────────────────────────────────────────────────────
+    wakeWordInput.addEventListener('input', () => {
+        wakeWord = wakeWordInput.value.trim().toLowerCase();
+        wakeWordDisp.textContent = `"${wakeWordInput.value.trim() || 'Jarvis'}"`;
+    });
+
+    // ── State machine ─────────────────────────────────────────────────
+    function setState(state) {
+        currentState = state;
+        vizWrap.className = 'sts-viz-wrap';
+        statePill.className = 'sts-state-pill';
+        micBtn.classList.remove('active');
+
+        switch (state) {
+            case 'idle':
+                stateText.textContent = 'Idle';
+                liveText.textContent  = 'Microphone off';
+                interruptBtn.style.display = 'none';
+                setCurrentAction('Waiting…');
+                break;
+            case 'listening':
+                vizWrap.classList.add('viz-listening');
+                statePill.classList.add('pill-listening');
+                stateText.textContent = 'Listening…';
+                liveText.textContent  = '…';
+                micBtn.classList.add('active');
+                interruptBtn.style.display = 'none';
+                setCurrentAction('🎙 Listening for wake word');
+                break;
+            case 'wake':
+                vizWrap.classList.add('viz-wake');
+                statePill.classList.add('pill-wake');
+                stateText.textContent = 'Speak your command';
+                setCurrentAction('🟢 Wake word detected — waiting for command');
+                break;
+            case 'processing':
+                vizWrap.classList.add('viz-processing');
+                statePill.classList.add('pill-processing');
+                stateText.textContent = 'Processing…';
+                liveText.textContent  = 'Thinking…';
+                setCurrentAction('⏳ Sending to LLM…');
+                break;
+            case 'speaking':
+                vizWrap.classList.add('viz-speaking');
+                statePill.classList.add('pill-speaking');
+                stateText.textContent = 'Speaking…';
+                interruptBtn.style.display = '';
+                setCurrentAction('🔊 Playing response');
+                break;
+        }
+    }
+
+    function setCurrentAction(text) {
+        currentActionText.textContent = text;
+    }
+
+    // ── Mic control ───────────────────────────────────────────────────
+    function toggleMic() {
+        isListening ? stopListening() : startListening();
+    }
+
+    function startListening() {
+        if (!SpeechRecognition) {
+            addTurn('system', 'Speech recognition not supported. Try Chrome.');
+            return;
+        }
+        recognition = new SpeechRecognition();
+        recognition.continuous     = true;
+        recognition.interimResults = true;
+        recognition.lang           = 'en-US';
+        recognition.onresult = handleSpeech;
+        recognition.onerror  = (e) => { console.error('SR error:', e.error); stopListening(); };
+        recognition.onend    = () => { if (isListening && !isSpeaking) recognition.start(); };
+        recognition.start();
+        isListening     = true;
+        wakeDetected    = false;
+        wakeBannerShown = false;
+        wakeResultIndex = -1;
+        commandBuffer   = '';
+        initAudio();
+        setState('listening');
+    }
+
+    function stopListening() {
+        if (recognition) { try { recognition.stop(); } catch(_){} recognition = null; }
+        isListening     = false;
+        wakeDetected    = false;
+        wakeBannerShown = false;
+        wakeResultIndex = -1;
+        commandBuffer   = '';
+        clearTimeout(pauseTimer);
+        stopAudio();
+        setState('idle');
+    }
+
+    function pauseRecognition() {
+        if (recognition) { try { recognition.stop(); } catch(_){} }
+    }
+
+    function resumeRecognition() {
+        if (!isListening || !SpeechRecognition) return;
+        try {
+            recognition = new SpeechRecognition();
+            recognition.continuous     = true;
+            recognition.interimResults = true;
+            recognition.lang           = 'en-US';
+            recognition.onresult = handleSpeech;
+            recognition.onerror  = (e) => { console.error('SR error:', e.error); stopListening(); };
+            recognition.onend    = () => { if (isListening && !isSpeaking) recognition.start(); };
+            recognition.start();
+            wakeDetected    = false;
+            wakeBannerShown = false;
+            wakeResultIndex = -1;
+            commandBuffer   = '';
+        } catch (e) { console.error('Resume recognition failed:', e); }
+    }
+
+    // ── Speech handler ────────────────────────────────────────────────
+    function handleSpeech(event) {
+        let interim = '', final_ = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const res = event.results[i];
+            const t   = res[0].transcript;
+
+            if (!wakeDetected) {
+                const lower = t.toLowerCase();
+                if (lower.includes(wakeWord)) {
+                    wakeDetected    = true;
+                    wakeResultIndex = i;
+                    if (!wakeBannerShown) {
+                        wakeBannerShown = true;
+                        setState('wake');
+                        addTurn('system', '🟢 Wake word detected');
+                    }
+                    resetPauseTimer();
+                    const idx = lower.indexOf(wakeWord);
+                    commandBuffer = t.substring(idx + wakeWord.length).trim();
+                }
+            }
+            if (wakeDetected) {
+                if (i === wakeResultIndex) {
+                    const lower = t.toLowerCase();
+                    const idx   = lower.indexOf(wakeWord);
+                    if (idx !== -1) commandBuffer = t.substring(idx + wakeWord.length).trim();
+                } else if (i > wakeResultIndex && res.isFinal) {
+                    commandBuffer += ' ' + t;
+                    commandBuffer = commandBuffer.trim();
+                }
+                resetPauseTimer();
+            }
+            if (res.isFinal) final_ += t; else interim += t;
+        }
+        liveText.textContent = interim || final_ || '…';
+    }
+
+    function resetPauseTimer() {
+        clearTimeout(pauseTimer);
+        pauseTimer = setTimeout(() => {
+            if (wakeDetected && commandBuffer.trim()) submitCommand(commandBuffer.trim());
+            else if (wakeDetected) {
+                wakeDetected = false;
+                wakeResultIndex = -1;
+                setState('listening');
+            }
+        }, PAUSE_MS);
+    }
+
+    function submitCommand(text) {
+        if (pendingVoiceRequest) return;
+        const now = Date.now();
+        if (text === lastVoiceCommand && (now - lastVoiceCommandAt) < 2000) return;
+        wakeDetected    = false;
+        wakeBannerShown = false;
+        wakeResultIndex = -1;
+        commandBuffer   = '';
+        clearTimeout(pauseTimer);
+        addTurn('user', text);
+        setState('processing');
+        sendWS('chat', { content: text, source: 'voice', request_id: nextRequestId() });
+        pendingVoiceRequest = true;
+        lastVoiceCommand = text;
+        lastVoiceCommandAt = now;
+    }
+
+    // ── Transcript ────────────────────────────────────────────────────
+    function addTurn(role, text) {
+        const key = `${role}::${text}`;
+        if (key === _lastTurnKey) return;
+        _lastTurnKey = key;
+        transcriptEmpty.style.display = 'none';
+        const div = document.createElement('div');
+        div.className = `sts-turn sts-turn-${role}`;
+        const label = role === 'user' ? 'You' : role === 'assistant' ? 'Assistant' : '';
+        div.innerHTML = label
+            ? `<span class="sts-turn-role">${label}</span><span class="sts-turn-text">${escapeHtml(text)}</span>`
+            : `<span class="sts-turn-text sts-turn-system-text">${escapeHtml(text)}</span>`;
+        transcriptPanel.appendChild(div);
+        transcriptPanel.scrollTop = transcriptPanel.scrollHeight;
+    }
+
+    function clearTranscript() {
+        transcriptPanel.querySelectorAll('.sts-turn').forEach(el => el.remove());
+        transcriptEmpty.style.display = 'flex';
+        _lastTurnKey = '';
+    }
+
+    // ── TTS — server-side via /api/speak ──────────────────────────────
+    async function speakText(text) {
+        if (!text || !text.trim()) return;
+
+        const wasListening = isListening;
+        pauseRecognition();      // stop mic while speaking to avoid feedback
+        isSpeaking = true;
+        setState('speaking');
+
+        try {
+            const backend = document.getElementById('ttsSelect').value;
+            const res = await fetch('/api/speak', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, backend }),
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: 'TTS request failed' }));
+                console.error('TTS error:', err);
+                addTurn('system', `⚠️ TTS error: ${err.error || res.statusText}`);
+            } else {
+                const ct = res.headers.get('content-type') || '';
+                if (ct.startsWith('audio/')) {
+                    // Server returned audio bytes — play in browser
+                    const blob = await res.blob();
+                    const url  = URL.createObjectURL(blob);
+                    await new Promise((resolve) => {
+                        const audio = new Audio(url);
+                        audio.onended = resolve;
+                        audio.onerror = resolve;
+                        audio.play().catch(resolve);
+                    });
+                    URL.revokeObjectURL(url);
+                } else if (ct.includes('application/json')) {
+                    // JSON response — check ok field for local_playback errors
+                    const data = await res.json();
+                    if (data.ok === false) {
+                        console.error('TTS backend error:', data);
+                        addTurn('system', `⚠️ TTS error: ${data.error || 'Unknown backend error'}`);
+                    }
+                    // data.ok === true → local_playback already played audio
+                }
+                // For JSON responses, backend may have handled playback internally.
+            }
+        } catch (e) {
+            console.error('TTS fetch error:', e);
+            addTurn('system', `⚠️ TTS error: ${e.message}`);
+        } finally {
+            isSpeaking = false;
+            interruptBtn.style.display = 'none';
+            if (wasListening) {
+                resumeRecognition();
+                setState('listening');
+            } else {
+                setState('idle');
+            }
+        }
+    }
+
+    function interruptSpeaking() {
+        // For local_playback there's no easy way to interrupt the server-side
+        // audio. For browser-played audio we could stop it, but for now we
+        // just mark state and the finally block will clean up.
+        isSpeaking = false;
+        interruptBtn.style.display = 'none';
+        addTurn('system', '⚠️ Speech interrupted');
+        if (isListening) { resumeRecognition(); setState('listening'); }
+        else setState('idle');
+    }
+
+    // ── Activity ──────────────────────────────────────────────────────
+    const stepConfig = {
+        iteration:   { icon: '🔄', label: 'Iteration',   cls: 'step-iteration' },
+        thought:     { icon: '💭', label: 'Thought',      cls: 'step-thought' },
+        tool_call:   { icon: '🔧', label: 'Tool Call',    cls: 'step-tool-call' },
+        tool_result: { icon: '✅', label: 'Tool Result',  cls: 'step-tool-result' },
+        model:       { icon: '🤖', label: 'Model',        cls: 'step-model' },
+        answer:      { icon: '💬', label: 'Answer',       cls: 'step-answer' },
+        error:       { icon: '❌', label: 'Error',        cls: 'step-error' },
+    };
+
+    function appendStep(stepType, content, agent) {
+        activityEmpty.style.display = 'none';
+        const cfg = stepConfig[stepType] || { icon: '•', label: stepType, cls: 'step-default' };
+        setCurrentAction(`${cfg.icon} ${cfg.label}: ${content.substring(0, 80)}${content.length > 80 ? '…' : ''}`);
+        const div = document.createElement('div');
+        div.className = `step-entry ${cfg.cls}`;
+        const display = content.length > 300 ? content.substring(0, 300) + '…' : content;
+        const agentTag = agent ? `<span class="step-agent">${agent}</span>` : '';
+        div.innerHTML = `
+            <div class="step-header">
+                <span class="step-icon">${cfg.icon}</span>
+                <span class="step-label">${cfg.label}</span>
+                ${agentTag}
+                <span class="step-time">${new Date().toLocaleTimeString()}</span>
+            </div>
+            <div class="step-content">${escapeHtml(display)}</div>
+        `;
+        activityBody.appendChild(div);
+        activityBody.scrollTop = activityBody.scrollHeight;
+    }
+
+    function clearSteps() {
+        activityBody.querySelectorAll('.step-entry').forEach(el => el.remove());
+        activityEmpty.style.display = 'flex';
+        setCurrentAction('Waiting…');
+    }
+
+    function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.appendChild(document.createTextNode(text));
+        return d.innerHTML;
+    }
+
+    // ── Backend hot-reload ───────────────────────────────────────────
+    function switchBackend(stage, backendId) {
+        sendWS('switch_backend', { stage, backend: backendId });
+        addTurn('system', `🔄 Switched ${stage.toUpperCase()} → ${backendId}`);
+    }
+
+    // ── WebSocket ─────────────────────────────────────────────────────
+    handleWSMessage = function(msg) {
+        switch (msg.type) {
+            case 'chat_response':
+                addTurn('assistant', msg.data.content);
+                speakText(msg.data.content);
+                pendingVoiceRequest = false;
+                break;
+            case 'status':
+                if (msg.data.status === 'thinking') setState('processing');
+                else if (msg.data.status === 'done' && !isSpeaking)
+                    setState(isListening ? 'listening' : 'idle');
+                if (msg.data.status === 'done' || msg.data.status === 'cleared') {
+                    pendingVoiceRequest = false;
+                }
+                break;
+            case 'step':
+                appendStep(msg.data.step_type || 'default', msg.data.content || '', msg.data.agent || '');
+                break;
+            case 'error':
+                addTurn('system', `⚠️ ${msg.data.content}`);
+                appendStep('error', msg.data.content, msg.data.agent || 'System');
+                if (!isSpeaking) setState(isListening ? 'listening' : 'idle');
+                pendingVoiceRequest = false;
+                break;
+            case 'backend_changed':
+                if (msg.data.stage === 'stt') document.getElementById('sttSelect').value = msg.data.backend;
+                else if (msg.data.stage === 'tts') document.getElementById('ttsSelect').value = msg.data.backend;
+                break;
+            case 'theme_change':
+                document.documentElement.setAttribute('data-theme', msg.data.theme);
+                break;
+        }
+    };
+</script>
+{% endblock %}

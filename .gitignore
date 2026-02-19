@@ -1,0 +1,101 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Environment / secrets
+.env
+.env.*
+.envrc
+.env.local
+*.env
+config.local.*
+config.*.local
+secrets.*
+credentials.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# Logs
+*.log
+logs/
+bot\ logs/
+
+# Models & weights (use Git LFS if needed)
+models/
+*.safetensors
+*.pt
+*.onnx
+*.bin
+*.gguf
+*.wav
+*.mp3
+
+# Runtime data
+data/
+artifacts/
+
+# UV / Package Managers
+.uv_pid*
+uv.lock
+
+# Caches
+.ruff_cache/
+.uv-cache/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Agent / tool config (local only)
+.claude/
+.codex/
+.gemini/
+
+# Project Specific
+client_output.txt
+lsof*.txt
+server_ps.txt
+*.png
+backup_*/
+frontend/
+node_modules/
+obs.py
+test_*.py

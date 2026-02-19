@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ state.theme }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}LocalAgents{% endblock %}</title>
+    <meta name="description" content="Multi-agent AI system with orchestrator architecture">
+    <link rel="stylesheet" href="/static/style.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="nav">
+        <div class="nav-brand">
+            <span class="nav-logo">⚡</span>
+            <span class="nav-title">LocalAgents</span>
+        </div>
+        <div class="nav-links">
+            <a href="/" class="nav-link {% if active_page == 'chat' %}active{% endif %}">Chat</a>
+            <a href="/observability" class="nav-link {% if active_page == 'observability' %}active{% endif %}">Traces</a>
+            <a href="/sts" class="nav-link {% if active_page == 'sts' %}active{% endif %}">STS</a>
+            <a href="/self" class="nav-link {% if active_page == 'self' %}active{% endif %}">Self</a>
+        </div>
+        <button class="btn btn-ghost" onclick="toggleTheme()" title="Toggle theme">🌓</button>
+    </nav>
+
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+        // ── WebSocket connection (robust, single-instance) ──────────────
+        let ws = null;
+        let reconnectTimer = null;
+        let reconnectDelay = 2000;          // start at 2s, backoff to 30s
+        const RECONNECT_MAX = 30000;
+        const WS_PAGE = '{{ active_page | default("chat") }}';
+
+        function connectWebSocket() {
+            // Clear any pending reconnect
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+
+            // Tear down previous connection completely
+            if (ws) {
+                try { ws.onclose = null; ws.onerror = null; ws.onmessage = null; ws.close(); } catch(_){}
+                ws = null;
+            }
+
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${proto}//${location.host}/ws?page=${WS_PAGE}`);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                reconnectDelay = 2000;      // reset backoff on success
+                document.body.classList.remove('ws-disconnected');
+                document.body.classList.add('ws-connected');
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting in', reconnectDelay, 'ms');
+                document.body.classList.remove('ws-connected');
+                document.body.classList.add('ws-disconnected');
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(connectWebSocket, reconnectDelay);
+                reconnectDelay = Math.min(reconnectDelay * 1.5, RECONNECT_MAX);
+            };
+
+            ws.onerror = (e) => console.error('WebSocket error:', e);
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleWSMessage(msg);
+                } catch (e) {
+                    console.error('Failed to parse WS message:', e);
+                }
+            };
+        }
+
+        function sendWS(type, data = {}) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type, data }));
+            }
+        }
+
+        function toggleTheme() {
+            sendWS('toggle_theme');
+            const html = document.documentElement;
+            const current = html.getAttribute('data-theme');
+            html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+        }
+
+        // Override in page templates
+        function handleWSMessage(msg) {
+            if (msg.type === 'theme_change') {
+                document.documentElement.setAttribute('data-theme', msg.data.theme);
+            }
+        }
+
+        connectWebSocket();
+    </script>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

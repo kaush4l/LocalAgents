@@ -1,0 +1,116 @@
+{% extends "base.j2" %}
+{% set active_page = "observability" %}
+
+{% block title %}Traces — LocalAgents{% endblock %}
+
+{% block content %}
+<div class="obs-container">
+
+    <div class="obs-header">
+        <h1>Observability Traces</h1>
+        <div class="obs-controls">
+            <span class="obs-count" id="eventCount">{{ state.observability_events | length }} events</span>
+            <label class="obs-filter-auto">
+                <input type="checkbox" id="autoScroll" checked> Auto-scroll
+            </label>
+            <button class="btn btn-ghost btn-sm" onclick="clearEvents()">Clear</button>
+        </div>
+    </div>
+
+    <div class="obs-filters">
+        <button class="filter-btn active" data-filter="all" onclick="setFilter('all', this)">All</button>
+        <button class="filter-btn" data-filter="trace_start" onclick="setFilter('trace_start', this)">Traces</button>
+        <button class="filter-btn" data-filter="tool_start" onclick="setFilter('tool_start', this)">Tools</button>
+        <button class="filter-btn" data-filter="thought" onclick="setFilter('thought', this)">Thoughts</button>
+        <button class="filter-btn" data-filter="model_end" onclick="setFilter('model_end', this)">Model</button>
+        <button class="filter-btn" data-filter="error" onclick="setFilter('error', this)">Errors</button>
+        <button class="filter-btn" data-filter="system" onclick="setFilter('system', this)">System</button>
+    </div>
+
+    <div class="obs-timeline" id="obsTimeline">
+        {% for evt in state.observability_events %}
+        <div class="obs-event obs-type-{{ evt.type }}" data-type="{{ evt.type }}">
+            <div class="obs-event-header">
+                <span class="obs-type-badge">{{ evt.type }}</span>
+                <span class="obs-agent">{{ evt.agent or '' }}</span>
+                <span class="obs-time">{{ evt.timestamp }}</span>
+            </div>
+            {% if evt.message %}
+            <div class="obs-event-body">{{ evt.message }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const timeline = document.getElementById('obsTimeline');
+    const eventCountEl = document.getElementById('eventCount');
+    const autoScrollEl = document.getElementById('autoScroll');
+    let currentFilter = 'all';
+    let eventCount = {{ state.observability_events | length }};
+
+    function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
+    function updateCount() {
+        eventCountEl.textContent = `${eventCount} events`;
+    }
+
+    function setFilter(filter, btn) {
+        currentFilter = filter;
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.obs-event').forEach(el => {
+            el.style.display = (filter === 'all' || el.dataset.type === filter) ? '' : 'none';
+        });
+    }
+
+    function clearEvents() {
+        timeline.innerHTML = '';
+        eventCount = 0;
+        updateCount();
+    }
+
+    function appendEvent(evt) {
+        const div = document.createElement('div');
+        div.className = `obs-event obs-type-${evt.type || 'log'}`;
+        div.dataset.type = evt.type || 'log';
+        const bodyHtml = evt.message
+            ? `<div class="obs-event-body">${escapeHtml(evt.message)}</div>`
+            : '';
+        div.innerHTML = `
+            <div class="obs-event-header">
+                <span class="obs-type-badge">${evt.type || 'log'}</span>
+                <span class="obs-agent">${evt.agent || ''}</span>
+                <span class="obs-time">${evt.ts || evt.timestamp || ''}</span>
+            </div>
+            ${bodyHtml}
+        `;
+        if (currentFilter !== 'all' && div.dataset.type !== currentFilter) {
+            div.style.display = 'none';
+        }
+        timeline.appendChild(div);
+        eventCount++;
+        updateCount();
+        if (autoScrollEl.checked) {
+            timeline.scrollTop = timeline.scrollHeight;
+        }
+    }
+
+    handleWSMessage = function(msg) {
+        if (msg.type === 'observability_event' && msg.data) {
+            appendEvent(msg.data);
+        } else if (msg.type === 'theme_change') {
+            document.documentElement.setAttribute('data-theme', msg.data.theme);
+        }
+    };
+
+    updateCount();
+</script>
+{% endblock %}
