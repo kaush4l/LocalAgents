@@ -18,19 +18,9 @@ from pydantic import BaseModel, Field, PrivateAttr
 from core import observability
 from core.sts_models import STSBackendError, SynthesisRequestModel, SynthesisResultModel
 from core.utils import compact_reason as _compact_reason
+from core.utils import download_hf_snapshot as _download_hf_snapshot
 
 logger = logging.getLogger(__name__)
-
-
-def _download_hf_snapshot(repo_id: str, local_dir: Path) -> None:
-    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
-    from huggingface_hub import snapshot_download
-
-    local_dir.mkdir(parents=True, exist_ok=True)
-    snapshot_download(
-        repo_id=repo_id,
-        local_dir=str(local_dir),
-    )
 
 
 def _resolve_torch_device(preferred: str) -> str:

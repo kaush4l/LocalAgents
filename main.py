@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Load .env into os.environ before anything else
 
-import uvicorn
+import uvicorn  # noqa: E402
 
 
 def main() -> None:

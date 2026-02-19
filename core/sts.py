@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -40,7 +41,7 @@ class STSService(RuntimeObject):
         return self._shutdown_services()
 
     async def _initialize_services(self) -> None:
-        self._verify_local_asr_model()
+        await self._verify_local_asr_model()
         await self.stt.initialize()
         await self.tts.initialize()
         self._model_status.update(
@@ -51,14 +52,30 @@ class STSService(RuntimeObject):
         await self.stt.shutdown()
         await self.tts.shutdown()
 
-    def _verify_local_asr_model(self) -> None:
+    async def _verify_local_asr_model(self) -> None:
+        """Verify the local ASR model; auto-download if qwen3_asr is the active backend."""
         path = Path(os.getenv("QWEN3_ASR_MODEL", "models/qwen3-asr-0.6b")).expanduser()
+        active_backend = os.getenv("STS_TRANSCRIBE_BACKEND", "macos_native_bridge")
         exists = path.exists() and any(path.iterdir()) if path.exists() else False
+
+        if not exists and active_backend == "qwen3_asr":
+            from core.utils import _HF_ASR_REPO, download_hf_snapshot
+
+            repo_id = os.getenv("QWEN3_ASR_REPO", _HF_ASR_REPO)
+            logger.info("Downloading ASR model %s → %s", repo_id, path)
+            try:
+                await asyncio.get_running_loop().run_in_executor(None, download_hf_snapshot, repo_id, path)
+                exists = True
+            except Exception as exc:
+                logger.warning("ASR model download failed: %s", exc)
+
         self._model_status["qwen3_asr"] = {"path": str(path), "exists": exists}
         if exists:
             logger.info("Local model verified: qwen3_asr -> %s", path)
         else:
-            logger.warning("Local model NOT found: qwen3_asr -> %s", path)
+            logger.warning(
+                "Local model NOT found: %s (set QWEN3_ASR_MODEL or switch to whisper_api/macos_native_bridge)", path
+            )
         observability.log_event("sts_model_verification", agent="sts", meta={"models": dict(self._model_status)})
 
     def get_model_status(self) -> dict[str, dict[str, Any]]:
