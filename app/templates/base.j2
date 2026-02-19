@@ -15,9 +15,8 @@
             <span class="nav-title">LocalAgents</span>
         </div>
         <div class="nav-links">
-            <a href="/" class="nav-link {% if active_page == 'chat' %}active{% endif %}">Chat</a>
+            <a href="/" class="nav-link {% if active_page == 'sts' %}active{% endif %}">STS</a>
             <a href="/observability" class="nav-link {% if active_page == 'observability' %}active{% endif %}">Traces</a>
-            <a href="/sts" class="nav-link {% if active_page == 'sts' %}active{% endif %}">STS</a>
             <a href="/self" class="nav-link {% if active_page == 'self' %}active{% endif %}">Self</a>
         </div>
         <button class="btn btn-ghost" onclick="toggleTheme()" title="Toggle theme">🌓</button>
@@ -33,7 +32,7 @@
         let reconnectTimer = null;
         let reconnectDelay = 2000;          // start at 2s, backoff to 30s
         const RECONNECT_MAX = 30000;
-        const WS_PAGE = '{{ active_page | default("chat") }}';
+        const WS_PAGE = '{{ active_page | default("sts") }}';
 
         function connectWebSocket() {
             // Clear any pending reconnect
@@ -67,6 +66,11 @@
             ws.onerror = (e) => console.error('WebSocket error:', e);
 
             ws.onmessage = (event) => {
+                // Binary message = audio bytes from server-side TTS
+                if (event.data instanceof Blob) {
+                    handleWSBinary(event.data);
+                    return;
+                }
                 try {
                     const msg = JSON.parse(event.data);
                     handleWSMessage(msg);
@@ -95,6 +99,9 @@
                 document.documentElement.setAttribute('data-theme', msg.data.theme);
             }
         }
+
+        // Override in page templates (sts.j2 plays audio blobs)
+        function handleWSBinary(blob) {}
 
         connectWebSocket();
     </script>

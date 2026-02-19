@@ -2,9 +2,8 @@
 FastAPI backend — WebSocket-based real-time communication with the orchestrator.
 
 Routes:
-    GET  /                — Chat page
+    GET  /                — Speech-to-speech page (main)
     GET  /observability   — Trace viewer
-    GET  /sts             — Speech-to-speech page
     WS   /ws              — Bidirectional WebSocket
 """
 
@@ -72,7 +71,7 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
 
     # Scope constants for _obs_sink broadcasts
-    _STEP_PAGES: list[str] = ["chat", "sts"]
+    _STEP_PAGES: list[str] = ["sts"]
 
     def _obs_sink(event: dict) -> None:
         """Fan-out every observability event into typed WebSocket messages.
@@ -171,7 +170,7 @@ async def lifespan(app: FastAPI):
                 )
                 loop.call_soon_threadsafe(
                     asyncio.create_task,
-                    broadcast_event(step, scope="chat"),
+                    broadcast_event(step, scope="sts"),
                 )
                 return
 
@@ -255,24 +254,6 @@ templates = Jinja2Templates(directory=str(_app_dir / "templates"))
 
 
 @app.get("/", response_class=HTMLResponse)
-async def chat_page(request: Request):
-    return templates.TemplateResponse(
-        request,
-        "chat.j2",
-        {"state": app_state.get_full_state()},
-    )
-
-
-@app.get("/observability", response_class=HTMLResponse)
-async def observability_page(request: Request):
-    return templates.TemplateResponse(
-        request,
-        "observability.j2",
-        {"state": app_state.get_full_state()},
-    )
-
-
-@app.get("/sts", response_class=HTMLResponse)
 async def sts_page(request: Request):
     # Gather backend options for dynamic dropdowns
     stt_backends = []
@@ -298,6 +279,14 @@ async def sts_page(request: Request):
         },
     )
 
+
+@app.get("/observability", response_class=HTMLResponse)
+async def observability_page(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "observability.j2",
+        {"state": app_state.get_full_state()},
+    )
 
 @app.get("/self", response_class=HTMLResponse)
 async def self_page(request: Request):
@@ -428,7 +417,7 @@ async def check_habit_route(habit_id: str, request: Request):
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     # Determine page scope from query parameter
-    page_scope = ws.query_params.get("page", "chat")
+    page_scope = ws.query_params.get("page", "sts")
     seen_request_ids: set[str] = set()
     last_accepted_chat_text: str = ""
     last_accepted_chat_at: float = 0.0
@@ -495,7 +484,7 @@ async def websocket_endpoint(ws: WebSocket):
                 # Notify relevant clients that processing started
                 await broadcast_event(
                     protocol.status_update("thinking", text),
-                    scope=["chat", "sts", "self"],
+                    scope=["sts", "self"],
                 )
 
                 try:
@@ -503,6 +492,20 @@ async def websocket_endpoint(ws: WebSocket):
                     answer = orchestrator_queue.extract_response(result)
                     app_state.add_message("assistant", answer)
                     await broadcast_event(protocol.chat_response(answer), scope=chat_scope)
+
+                    # Server-side auto-speak for voice commands:
+                    # Run TTS immediately and push audio bytes over WebSocket.
+                    if msg_source == "voice" and answer.strip():
+                        try:
+                            backend_id = app_state.active_tts_backend or None
+                            _mode, audio_bytes = await sts_service.tts.speak(
+                                answer, backend=backend_id
+                            )
+                            if audio_bytes:
+                                await ws.send_bytes(audio_bytes)
+                        except Exception as tts_exc:
+                            log_warning(__name__, "Auto-speak TTS failed: %s", tts_exc)
+
                     # After a self-voice command the agent may have mutated habits/checkins;
                     # push a fresh state snapshot so the self page can re-render.
                     if chat_scope == "self":
@@ -517,13 +520,13 @@ async def websocket_endpoint(ws: WebSocket):
                 except Exception as e:
                     error_msg = f"Error: {e}"
                     app_state.add_message("assistant", error_msg)
-                    await broadcast_event(protocol.error_event(error_msg), scope=["chat", "sts"])
+                    await broadcast_event(protocol.error_event(error_msg), scope="sts")
                 finally:
                     app_state.is_processing = False
                     app_state.current_query = ""
                     await broadcast_event(
                         protocol.status_update("done"),
-                        scope=["chat", "sts", "self"],
+                        scope=["sts", "self"],
                     )
 
             elif msg_type == "clear":

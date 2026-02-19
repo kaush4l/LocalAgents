@@ -482,12 +482,46 @@
         _lastTurnKey = '';
     }
 
-    // ── TTS — server-side via /api/speak ──────────────────────────────
+    // ── TTS — server pushes audio via WebSocket binary ────────────────
+    async function playAudioBlob(blob) {
+        const wasListening = isListening;
+        pauseRecognition();
+        isSpeaking = true;
+        setState('speaking');
+
+        try {
+            const arrayBuffer = await blob.arrayBuffer();
+            const actx = new (window.AudioContext || window.webkitAudioContext)();
+            const audioBuffer = await actx.decodeAudioData(arrayBuffer);
+            const source = actx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(actx.destination);
+            await new Promise((resolve) => {
+                source.onended = resolve;
+                source.start(0);
+            });
+            actx.close();
+        } catch (e) {
+            console.error('Audio playback error:', e);
+            addTurn('system', `⚠️ Audio playback error: ${e.message}`);
+        } finally {
+            isSpeaking = false;
+            interruptBtn.style.display = 'none';
+            if (wasListening) {
+                resumeRecognition();
+                setState('listening');
+            } else {
+                setState('idle');
+            }
+        }
+    }
+
+    // Fallback: manual TTS via /api/speak (for non-voice / text input)
     async function speakText(text) {
         if (!text || !text.trim()) return;
 
         const wasListening = isListening;
-        pauseRecognition();      // stop mic while speaking to avoid feedback
+        pauseRecognition();
         isSpeaking = true;
         setState('speaking');
 
@@ -506,7 +540,6 @@
             } else {
                 const ct = res.headers.get('content-type') || '';
                 if (ct.startsWith('audio/')) {
-                    // Server returned audio bytes — play in browser
                     const blob = await res.blob();
                     const url  = URL.createObjectURL(blob);
                     await new Promise((resolve) => {
@@ -517,15 +550,12 @@
                     });
                     URL.revokeObjectURL(url);
                 } else if (ct.includes('application/json')) {
-                    // JSON response — check ok field for local_playback errors
                     const data = await res.json();
                     if (data.ok === false) {
                         console.error('TTS backend error:', data);
                         addTurn('system', `⚠️ TTS error: ${data.error || 'Unknown backend error'}`);
                     }
-                    // data.ok === true → local_playback already played audio
                 }
-                // For JSON responses, backend may have handled playback internally.
             }
         } catch (e) {
             console.error('TTS fetch error:', e);
@@ -603,12 +633,18 @@
         addTurn('system', `🔄 Switched ${stage.toUpperCase()} → ${backendId}`);
     }
 
+    // ── WebSocket binary handler (server-pushed TTS audio) ─────────────
+    handleWSBinary = function(blob) {
+        playAudioBlob(blob);
+    };
+
     // ── WebSocket ─────────────────────────────────────────────────────
     handleWSMessage = function(msg) {
         switch (msg.type) {
             case 'chat_response':
                 addTurn('assistant', msg.data.content);
-                speakText(msg.data.content);
+                // Audio will arrive as a binary WS message from the server
+                // (no need to call speakText — server auto-speaks for voice)
                 pendingVoiceRequest = false;
                 break;
             case 'status':

@@ -371,7 +371,6 @@ class Qwen3TTSSynthesizer(LocalModelSynthesizerBase, PlayableSynthesizerBase):
                     language=language,
                     ref_audio=ref_audio_input,
                     x_vector_only_mode=True,
-                    non_streaming_mode=True,
                 )
             except TypeError:
                 wavs, sample_rate = self._model.generate_voice_clone(
@@ -383,7 +382,11 @@ class Qwen3TTSSynthesizer(LocalModelSynthesizerBase, PlayableSynthesizerBase):
 
         if not wavs:
             raise RuntimeError("Qwen3TTSModel returned no audio frames.")
-        audio = _as_mono_float32(wavs[0])
+        # Concatenate all streaming chunks into a single waveform
+        if len(wavs) == 1:
+            audio = _as_mono_float32(wavs[0])
+        else:
+            audio = np.concatenate([_as_mono_float32(w) for w in wavs])
         return audio, int(sample_rate)
 
     def _ensure_reference_audio(self, local_dir: Path) -> Path:
