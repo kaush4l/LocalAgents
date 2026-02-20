@@ -322,7 +322,7 @@ class OrchestratorQueue:
         return text if text else str(result)
 
     async def _worker_loop(self) -> None:
-        from agents.orchestrator import orchestrator
+        from workflows.general.orchestrator import orchestrator
 
         while True:
             request = await self._queue.get()

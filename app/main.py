@@ -26,8 +26,8 @@ from app import protocol
 from app.state import app_state, orchestrator_queue
 from channels.websocket_channel import WebSocketChannel
 from core import observability
-from core.logging_core import configure_logging, log_error, log_info, log_warning
-from core.sts import sts_service
+from core.utils.logging import configure_logging, log_error, log_info, log_warning
+from core.speech.sts import sts_service
 
 # ── logging ──────────────────────────────────────────────────────────────────
 
@@ -54,11 +54,17 @@ async def broadcast_event(
 async def lifespan(app: FastAPI):
     """Startup: init agents, queues, sinks. Shutdown: cleanup."""
 
-    # 1. Build orchestrator with all sub-agents
-    from agents.orchestrator import build_orchestrator
+    # 1. Build orchestrator (general workflow)
+    from workflows.general import build_orchestrator
 
     build_orchestrator()
     app_state.add_event("system", "Orchestrator built")
+
+    # 1b. Build self agent (self workflow — standalone)
+    from workflows.self import build_self_agent
+
+    build_self_agent()
+    app_state.add_event("system", "Self agent built")
 
     # 2. Start orchestrator queue (now that orchestrator exists)
     orchestrator_queue.start()

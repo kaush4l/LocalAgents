@@ -156,8 +156,19 @@ class BaseAgent(BaseModel):
     # ── prompt loading ───────────────────────────────────────────────────
 
     def _load_system_instructions(self) -> str:
-        prompt_path = Path.cwd() / "agents" / "prompts" / f"{self.system_instructions}.md"
-        return prompt_path.read_text(encoding="utf-8").strip() if prompt_path.exists() else ""
+        cwd = Path.cwd()
+        # Search prompts in workflow directories first, then legacy agents/prompts/
+        search_dirs = [
+            cwd / "workflows" / "general" / "prompts",
+            cwd / "workflows" / "self" / "prompts",
+            cwd / "agents" / "prompts",  # legacy fallback
+        ]
+        filename = f"{self.system_instructions}.md"
+        for d in search_dirs:
+            prompt_path = d / filename
+            if prompt_path.exists():
+                return prompt_path.read_text(encoding="utf-8").strip()
+        return ""
 
     def _format_tools_instructions(self) -> str:
         if not self.tools:

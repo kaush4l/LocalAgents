@@ -79,6 +79,16 @@
                     <line x1="8" y1="23" x2="16" y2="23"/>
                 </svg>
             </button>
+            <div class="sts-text-input-wrap">
+                <input type="text" class="sts-text-input" id="textInput" placeholder="Type a command…" spellcheck="false" autocomplete="off"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();submitTextInput()}">
+                <button class="sts-send-btn" id="sendBtn" onclick="submitTextInput()" title="Send">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                        <line x1="22" y1="2" x2="11" y2="13"/>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                    </svg>
+                </button>
+            </div>
             <button class="sts-ctrl-btn" id="interruptBtn" onclick="interruptSpeaking()" title="Stop speaking" style="display:none;">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"/>
@@ -97,14 +107,14 @@
             <button class="btn btn-ghost btn-sm" onclick="clearSteps()" title="Clear">🗑️</button>
         </div>
         <div class="activity-body" id="activityBody">
-            <div class="sts-current-action" id="currentAction">
+            <div class="sts-current-action" id="currentAction" style="display:none">
                 <div class="current-action-label">Current Step</div>
-                <div class="current-action-text" id="currentActionText">Waiting…</div>
+                <div class="current-action-text" id="currentActionText"></div>
             </div>
-            <div class="activity-divider"></div>
+            <div class="activity-divider" id="activityDivider" style="display:none"></div>
             <div class="activity-empty" id="activityEmpty">
-                <span style="opacity:0.3">📋</span>
-                <span>Steps will appear here</span>
+                <span style="opacity:0.4; font-size:1.4rem">⚡</span>
+                <span>Agent activity will stream here as you interact</span>
             </div>
         </div>
     </aside>
@@ -329,7 +339,16 @@
     }
 
     function setCurrentAction(text) {
-        currentActionText.textContent = text;
+        const block = document.getElementById('currentAction');
+        const divider = document.getElementById('activityDivider');
+        if (text === 'Waiting…' || !text) {
+            block.style.display = 'none';
+            divider.style.display = 'none';
+        } else {
+            block.style.display = '';
+            divider.style.display = '';
+            currentActionText.textContent = text;
+        }
     }
 
     // ── Mic control ───────────────────────────────────────────────────
@@ -458,6 +477,17 @@
         pendingVoiceRequest = true;
         lastVoiceCommand = text;
         lastVoiceCommandAt = now;
+    }
+
+    function submitTextInput() {
+        const input = document.getElementById('textInput');
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = '';
+        addTurn('user', text);
+        setState('processing');
+        sendWS('chat', { content: text, source: 'text', request_id: nextRequestId() });
+        pendingVoiceRequest = true;
     }
 
     // ── Transcript ────────────────────────────────────────────────────
